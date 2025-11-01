@@ -924,6 +924,7 @@ class AutoSaveWorker(QObject):
 
         end_i = self.getLastTrackedFrame(posData)
         
+        saved_segm_data = None
         if self.isAutoSaveON:
             if end_i < len(posData.segm_data):
                 saved_segm_data = posData.segm_data
@@ -944,7 +945,7 @@ class AutoSaveWorker(QObject):
             if lab is None:
                 break
             
-            if self.isAutoSaveON:
+            if self.isAutoSaveON and saved_segm_data is not None:
                 if posData.SizeT > 1:
                     saved_segm_data[frame_i] = lab
                 else:
@@ -5862,6 +5863,7 @@ class CombineChannelsWorkerUtil(BaseWorkerUtil):
             steps:  Dict[str, Dict[str, Any]],
             appended_text_filename: str,
             keep_input_data_type: bool,
+            n_threads: int = None
         ):
 
         channel_name_first = steps[1]['channel']
@@ -5893,6 +5895,7 @@ class CombineChannelsWorkerUtil(BaseWorkerUtil):
             save_filepaths=save_filepaths,
             signals=self.signals,
             logger_func=self.logger.log,
+            n_threads=n_threads
             )
     
     @worker_exception_handler
@@ -5934,7 +5937,8 @@ class CombineChannelsWorkerUtil(BaseWorkerUtil):
             image_paths,
             selectedSteps,
             appendedName,
-            self.keepInputDataType
+            self.keepInputDataType,
+            n_threads=self.nThreads
         )
 
         self.signals.finished.emit(self)

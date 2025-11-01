@@ -24,6 +24,21 @@ except:
     NETWORKX_INSTALLED = False
 
 __all__ = ['ColorMap']
+
+FLUO_CHANNELS_COLORS = {
+    'mCardinal': (255, 0, 255), 
+    'mNeonGreen': (0, 255, 0),
+    'NeonGreen': (0, 255, 0),
+    'mNG': (0, 255, 0), 
+    'mScarlet': (255, 0, 255), 
+    'mScarlet-I3': (255, 0, 255), 
+    'mKate': (255, 0, 255), 
+    'mKate2': (255, 0, 255),
+    'GFP': (0, 255, 0),
+    'EGFP': (0, 255, 0),
+    'mCitrine': (255, 255, 0)
+}
+
 _mapCache = {}
 def getFromMatplotlib(name):
     """
@@ -188,9 +203,9 @@ def get_greedy_lut(lab, lut, ids=None):
     adj_M[expanded[:-1, :], expanded[1:, :]] = 1
     # adj_M = adj_M[1:, 1:]
 
-    G = nx.from_numpy_array(adj_M)
+    graph = nx.from_numpy_array(adj_M)
     color_ids = nx.coloring.greedy_color(
-        G, strategy='independent_set', interchange=False
+        graph, strategy='connected_sequential'
     )
     
     n_foregr_colors = len(lut)-1

@@ -415,7 +415,6 @@ class SegmKernel(_WorkflowKernel):
                     i = z_info.Index
                     z = z_info.z_slice_used_dataPrep
                     zProjHow = z_info.which_z_proj
-                    printl(z_info, z_info.Index, stop_i)
                     img = img_data_slice[i]
                     if self.second_channel_name is not None:
                         second_ch_img = second_ch_data_slice[i]

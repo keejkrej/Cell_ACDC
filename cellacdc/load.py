@@ -236,8 +236,27 @@ def read_segm_workflow_from_config(filepath) -> dict:
         ini_items[section] = {}
         for option, value in options.items():
             if section == 'paths_info' or section == 'paths_to_segment':
-                value = value.strip('\n').strip().split('\n')
-                ini_items[section][option] = value
+                value_list  = value.strip('\n').strip().split('\n')
+                if option == 'paths':
+                    abs_paths = []
+                    folderpath = os.path.dirname(filepath)
+                    for path in value_list:
+                        if os.path.exists(path):
+                            abs_paths.append(path)
+                            continue
+                        
+                        abs_path = f'{folderpath}{os.sep}{path}'
+                        if not os.path.exists(abs_path):
+                            raise FileNotFoundError(
+                                'The following path to analyse does not exist:'
+                                f'\n\n"{path}"\n'
+                            )
+
+                        abs_paths.append(abs_path)
+
+                    ini_items[section][option] = abs_paths
+                else:
+                    ini_items[section][option] = value_list
                 continue
             if value == 'False':
                 value = False
@@ -248,7 +267,7 @@ def read_segm_workflow_from_config(filepath) -> dict:
             elif option == 'SizeT' or option == 'SizeZ':
                 value = int(value)
                 
-            if section == 'standard_postprocess_features':
+            if section == 'standard_postprocess_features' and value is not None:
                 for _type in (int, float, str):
                     try:
                         value = _type(value)
@@ -257,7 +276,16 @@ def read_segm_workflow_from_config(filepath) -> dict:
                         continue
             
             elif section == 'custom_postprocess_features':
-                value = tuple([float(val) for val in value])
+                low, high = value.strip().strip('(').strip(')').split(',')
+                if low.strip().lower() == 'none':
+                    low = None
+                else:
+                    low = float(low)
+                if high.strip().lower() == 'none':
+                    high = None
+                else:
+                    high = float(high)
+                value = (low, high)
             
             ini_items[section][option] = value
     return ini_items
@@ -2910,14 +2938,20 @@ class loadData:
         metadataWin.deleteLater()
         return True
     
-    def zSliceSegmentation(self, filename, frame_i):
+    def zSliceSegmentation(self, filename, frame_i, errors='raise'):
         if self.SizeZ > 1:
             idx = (filename, frame_i)
-            if self.segmInfo_df.at[idx, 'resegmented_in_gui']:
-                col = 'z_slice_used_gui'
-            else:
-                col = 'z_slice_used_dataPrep'
-            z = self.segmInfo_df.at[idx, col]
+            try:
+                if self.segmInfo_df.at[idx, 'resegmented_in_gui']:
+                    col = 'z_slice_used_gui'
+                else:
+                    col = 'z_slice_used_dataPrep'
+                z = self.segmInfo_df.at[idx, col]
+            except Exception as err:
+                if errors == 'raise':
+                    raise err
+                else:
+                    return round(self.SizeZ / 2)
         else:
             z = None
         return z
@@ -3124,14 +3158,17 @@ class select_exp_folder:
             current=0, title='Select Position folder',
             CbLabel="Select folder to load:",
             showinexplorer_button=False, full_paths=None,
-            allow_abort=True, show=False, toggleMulti=False,
-            allowMultiSelection=True
+            allow_cancel=True, show=False, toggleMulti=False,
+            allowMultiSelection=True, 
+            informativeText='',
+            selectedValues=None
         ):
         from . import apps
         font = QtGui.QFont()
         font.setPixelSize(13)
         win = apps.QtSelectItems(
-            title, values, '', CbLabel=CbLabel, parent=parentQWidget,
+            title, values, informativeText, CbLabel=CbLabel, 
+            parent=parentQWidget,
             showInFileManagerPath=self.exp_path
         )
         win.setFont(font)
@@ -3143,8 +3180,10 @@ class select_exp_folder:
             win.multiPosButton.setDisabled(True)
         if toggleMulti:
             win.multiPosButton.setChecked(True)
+        if selectedValues is not None:
+            win.setSelectedItems(selectedValues)
         win.exec_()
-        self.was_aborted = win.cancel
+        self.cancel = win.cancel
         if not win.cancel:
             self.selected_pos = [
                 self.pos_foldernames[idx] for idx in win.selectedItemsIdx
@@ -3292,7 +3331,7 @@ class select_exp_folder:
 
     def on_closing(self):
         self.selected_pos = [None]
-        self.was_aborted = True
+        self.cancel = True
         self.root.quit()
         self.root.destroy()
         if self.allow_abort:

@@ -53,6 +53,7 @@ from qtpy.QtWidgets import (
     QGraphicsBlurEffect, QGraphicsProxyWidget, QGraphicsObject,
     QButtonGroup, QStyleOptionSlider
 )
+import qtpy.compat
 
 import pyqtgraph as pg
 pg.setConfigOption('imageAxisOrder', 'row-major')
@@ -754,7 +755,6 @@ class browseFileButton(PushButton):
         self._openFolder = openFolder
         self._file_types = 'All Files (*)'
         if ext is not None:
-            s = ''
             s_li = []
             for name, extensions in ext.items():
                 _s = ''
@@ -2945,9 +2945,26 @@ class FormLayout(QGridLayout):
 def macShortcutToWindows(shortcut: str):
     if shortcut is None:
         return
-    s = shortcut.replace('Control', 'Meta')
-    s = shortcut.replace('Option', 'Alt')
-    s = shortcut.replace('Command', 'Ctrl')
+    
+    s = (shortcut
+        .replace('Control', 'Meta')
+        .replace('Option', 'Alt')
+        .replace('Command', 'Ctrl')
+    )
+    return s
+
+def windowsShortcutToMac(shortcut: str):
+    if shortcut is None:
+        return
+    
+    if not is_mac:
+        return shortcut
+    
+    s = (shortcut
+        .replace('Meta', 'Control')
+        .replace('Alt', 'Option')
+        .replace('Ctrl', 'Command')
+    )
     return s
 
 class ToolBarSeparator:
@@ -3708,21 +3725,12 @@ class ShortcutLineEdit(QLineEdit):
         self.setAlignment(Qt.AlignCenter)
     
     def text(self):
-        text = super().text()
-        if text == 'Command':
-            return 'Ctrl'
-        
-        if text == 'Option':
-            return 'Alt'
+        text = macShortcutToWindows(super().text())
         
         return text
     
     def setText(self, text):
-        if is_mac and text == 'Ctrl':
-            text = 'Command'
-        
-        if is_mac and text == 'Alt':
-            text = 'Option'
+        text = windowsShortcutToMac(text)
         
         super().setText(text)
         if not text:
@@ -6280,6 +6288,12 @@ class labelsGradientWidget(pg.GradientWidget):
             'Greedily shuffle colormap  (Alt+Shift+S)', self
         )
         self.menu.addAction(self.greedyShuffleCmapAction)
+        
+        self.permanentGreedyCmapAction = QAction(
+            'Always use greedy colormap', self
+        )
+        self.permanentGreedyCmapAction.setCheckable(True)
+        self.menu.addAction(self.permanentGreedyCmapAction)
 
         # Invert bw action
         self.invertBwAction = QAction('Invert black/white', self)
@@ -6617,7 +6631,8 @@ class MainPlotItem(pg.PlotItem):
         
         self.delRoiItems = {}
         self.highlightingRectItems = None
-        self._imageItem = None
+        self._baseImageItem = None
+        self._imageItems = []
     
     def addHighlightingRectItems(self):
         self.highlightingRectItems = {
@@ -6629,8 +6644,13 @@ class MainPlotItem(pg.PlotItem):
         for rect in self.highlightingRectItems.values():
             self.addItem(rect)
     
+    def addBaseImageItem(self, baseImageItem):
+        self._baseImageItem = baseImageItem
+        self._imageItems.append(baseImageItem)
+        self.addItem(baseImageItem)
+    
     def addImageItem(self, imageItem):
-        self._imageItem = imageItem
+        self._imageItems.append(imageItem)
         self.addItem(imageItem)
     
     def setHighlighted(self, highlighted):
@@ -6645,8 +6665,8 @@ class MainPlotItem(pg.PlotItem):
         ((xmin, xmax), (ymin, ymax)) = self.viewRange()
         xmin = xmin if xmin >= 0 else 0
         ymin = ymin if ymin >= 0 else 0
-        if self._imageItem is not None:
-            Y, X = self._imageItem.image.shape[:2]
+        if self._baseImageItem is not None:
+            Y, X = self._baseImageItem.image.shape[:2]
             xmax = min(xmax, X)
             ymax = min(ymax, Y)
         
@@ -7063,9 +7083,11 @@ class ParentImageItem(BaseImageItem):
         
         if self.activatingActions is None:
             return False
+        
         for action in self.activatingActions:
             if action.isChecked():
                 return True
+            
         return False
     
     # def setLevels(self, levels, **kargs):
@@ -7117,14 +7139,17 @@ class ParentImageItem(BaseImageItem):
     
     def setImage(
             self, image=None, autoLevels=None, next_frame_image=None, 
-            scrollbar_value=None, **kargs
+            scrollbar_value=None, force_set_linked=False, **kargs
         ):
         if autoLevels is None:
             autoLevels = self.autoLevelsEnabled
         
         super().setImage(image, autoLevels=autoLevels, **kargs)
         
-        if not self.isLinkedImageItemActive():
+        if self.linkedImageItem is None:
+            return
+        
+        if not self.isLinkedImageItemActive() and not force_set_linked:
             return
         
         if next_frame_image is not None:
@@ -8712,7 +8737,8 @@ class ScaleBar(QGraphicsObject):
             'loc': self._loc,
             'font_size': float(self._font_size[:-2]),
             'unit': self._unit,
-            'num_decimals': self._num_decimals
+            'num_decimals': self._num_decimals,
+            'move_with_zoom': self._move_with_zoom,
         }
         return properties
     
@@ -8725,7 +8751,7 @@ class ScaleBar(QGraphicsObject):
         x0 = self.x0c + Dx
         x1 = x0 + self._length
         y0 = y1 = self.y0c + Dy
-        self.plotItem.setData([x0, x1], [y0, y0])
+        self.plotItem.setData([x0, x1], [y0, y1])
         self.setTextPos()
     
     def paint(self, painter, option, widget):
@@ -8734,6 +8760,12 @@ class ScaleBar(QGraphicsObject):
     def boundingRect(self):
         ymin, xmin, ymax, xmax = self.bbox()
         return QRectF(xmin, ymin, xmax-xmin, ymax-ymin)
+    
+    def setLocationProperty(self, loc: str):
+        self._loc = loc 
+    
+    def setMoveWithZoomProperty(self, move_with_zoom):
+        self._move_with_zoom = move_with_zoom
     
     def setProperties(
             self, 
@@ -8745,7 +8777,8 @@ class ScaleBar(QGraphicsObject):
             loc='top-left',
             font_size=12,
             unit='',
-            num_decimals=0
+            num_decimals=0,
+            move_with_zoom=False
         ):
         self._loc = loc
         self._color = color
@@ -8755,6 +8788,7 @@ class ScaleBar(QGraphicsObject):
         self._font_size = f'{font_size}px'
         self._unit = unit
         self._num_decimals = num_decimals
+        self._move_with_zoom = move_with_zoom
         self._thickness = thickness
         self.pen = pg.mkPen(width=thickness, color=color, cosmetic=False)
         self.highlightPen = pg.mkPen(
@@ -8798,6 +8832,42 @@ class ScaleBar(QGraphicsObject):
         xl = xc-wl/2
         yt = y0-hl    
         self.labelItem.setPos(xl, yt)
+    
+    def updatePosViewRangeChanged(self, viewRange):
+        if self._loc == 'custom':
+            xx, yy = self.plotItem.getData()
+            x0p = xx[0]
+            y0p = yy[0]
+            xcp = x0p + self._length/2
+            hl = self.labelItem.itemRect().height()
+            ycp = y0p - hl/2  
+            x0 = self.xmin
+            y0 = self.ymin
+            x_range = self.xmax - x0
+            y_range = self.ymax - y0
+            Dx_perc = (xcp - x0)/x_range
+            Dy_perc = (ycp - y0)/y_range   
+            
+            self.updateViewRange(viewRange)
+            
+            X0 = self.xmin
+            Y0 = self.ymin
+            
+            X_range = self.xmax - X0
+            Y_range = self.ymax - Y0
+            
+            Xcp = X0 + (Dx_perc*X_range)
+            Ycp = Y0 + (Dy_perc*Y_range)
+            X0p = Xcp - (self._length/2)
+            Y0p = Ycp + (hl/2)
+            
+            X1p = X0p + self._length
+            Y1p = Y0p
+            
+            self.plotItem.setData([X0p, X1p], [Y0p, Y1p])
+        else:
+            self.updateViewRange(viewRange)
+            self.update()
     
     def getStartXCoordFromLoc(self, loc):
         if loc == 'custom':
@@ -9444,7 +9514,6 @@ class SwitchPlaneCombobox(QComboBox):
                 return axes
 
 class SamInputPointsWidget(QWidget):
-    isWidget = True
     sigValueChanged = Signal(str)
     
     def __init__(self, parent=None):
@@ -10016,9 +10085,9 @@ class TimestampItem(LabelItem):
         self._secondsPerFrame = secondsPerFrame
         self._x_pad = 3
         self._y_pad = 2
+        self.xmin, self.ymin = 0, 0
         self.SizeY = SizeY
         self.SizeX = SizeX
-        self.updateViewRange(viewRange)
         self._highlighted = False
         self._parent = parent
         if start_timedelta is None:
@@ -10026,12 +10095,13 @@ class TimestampItem(LabelItem):
         self._start_timedelta = start_timedelta
         self.clicked = False
         super().__init__(self)
+        self.updateViewRange(viewRange)
         self.createContextMenu()
     
     def setSecondsPerFrame(self, secondsPerFrame):
         self._secondsPerFrame = secondsPerFrame
     
-    def updateViewRange(self, viewRange):
+    def getBboxViewRange(self, viewRange):
         xRange, yRange = viewRange
         x0, x1 = xRange
         y0, y1 = yRange
@@ -10046,6 +10116,11 @@ class TimestampItem(LabelItem):
         
         if y1 > self.SizeY:
             y1 = self.SizeY
+        
+        return x0, y0, x1, y1
+   
+    def updateViewRange(self, viewRange):
+        x0, y0, x1, y1 = self.getBboxViewRange(viewRange)
         
         self.xmax = x1
         self.xmin = x0
@@ -10084,12 +10159,16 @@ class TimestampItem(LabelItem):
     def showContextMenu(self, x, y):
         self.contextMenu.popup(QPoint(int(x), int(y)))
     
+    def setLocationProperty(self, loc: str):
+        self._loc = loc    
+    
     def properties(self):
         properties = {
             'color': self._color,
             'loc': self._loc,
             'font_size': int(self._font_size[:-2]),
-            'start_timedelta': self._start_timedelta
+            'start_timedelta': self._start_timedelta,
+            'move_with_zoom': self._move_with_zoom,
         }
         return properties
 
@@ -10101,23 +10180,66 @@ class TimestampItem(LabelItem):
         self.setPosFromLoc()
         self.setText(frame_i)
     
+    def setMoveWithZoomProperty(self, move_with_zoom):
+        self._move_with_zoom = move_with_zoom
+    
+    def updatePosViewRangeChanged(self, viewRange):
+        if self._loc == 'custom':
+            textHeight = self.itemRect().height()
+            textWidth = self.itemRect().width()
+            x0p = self.pos().x()
+            y0p = self.pos().y()
+            xcp = x0p + textWidth/2
+            ycp = y0p + textHeight/2
+            x0 = self.xmin
+            y0 = self.ymin
+            x_range = self.xmax - x0
+            y_range = self.ymax - y0
+            Dx_perc = (xcp - x0)/x_range
+            Dy_perc = (ycp - y0)/y_range         
+            
+            self.updateViewRange(viewRange)
+            
+            X0 = self.xmin
+            Y0 = self.ymin
+            
+            X_range = self.xmax - X0
+            Y_range = self.ymax - Y0
+            
+            Xcp = X0 + (Dx_perc*X_range)
+            Ycp = Y0 + (Dy_perc*Y_range)
+            X0p = Xcp - (textWidth/2)
+            Y0p = Ycp - (textHeight/2)
+            
+            y_pos_max = self.ymax - textHeight - self._y_pad
+            if Y0p > y_pos_max:
+                Y0p = y_pos_max
+            
+            x_pos_max = self.xmax - textWidth - self._x_pad
+            if X0p > x_pos_max:
+                X0p = x_pos_max
+                
+            self.setPos(X0p, Y0p)
+        else:
+            self.updateViewRange(viewRange)
+            self.setPosFromLoc()
+            
+    
     def setPosFromLoc(self):
         textHeight = self.itemRect().height()
         textWidth = self.itemRect().width()
         if self._loc == 'custom':
             return
-            # pos = self.pos()
-            # x0, y0 = pos.x(), pos.y()
         
         if self._loc.find('top') != -1:
             y0 = self._y_pad + self.ymin
         else:
-            y0 = self.ymax - textHeight
+            y0 = self.ymax - textHeight - self._y_pad
         
         if self._loc.find('left') != -1:
             x0 = self._x_pad + self.xmin
         else:
-            x0 = self.xmax - textWidth
+            x0 = self.xmax - textWidth - self._x_pad
 
         self.setPos(x0, y0)
     
@@ -10126,13 +10248,15 @@ class TimestampItem(LabelItem):
             color=(255, 255, 255), 
             font_size='13px', 
             loc='top-left',
-            start_timedelta=None
+            start_timedelta=None,
+            move_with_zoom=False
         ):
         if start_timedelta is not None:
             self._start_timedelta = start_timedelta
         self._color = color
         self._loc = loc
         self._font_size = font_size
+        self._move_with_zoom = move_with_zoom
 
     def move(self, xm, ym):
         Dy = ym - self.yc
@@ -10762,14 +10886,16 @@ class MagicPromptsToolbar(ToolBar):
 
 class KeySequenceFromText(QKeySequence):
     def __init__(self, text: str):
+        if isinstance(text, str):
+            text = macShortcutToWindows(text)
         super().__init__(text)
         self._text = text
     
     def toString(self):
         if isinstance(self._text, str):
-            return self._text
+            return windowsShortcutToMac(self._text)
         else:
-            return super().toString()
+            return windowsShortcutToMac(super().toString())
     
 def modifierKeyToText(modifierKey: int):
     if modifierKey == Qt.ControlModifier:
@@ -10850,11 +10976,12 @@ class TimeWidget(QGroupBox):
         values, sign = self.values()
         return datetime.timedelta(**values)*sign
     
-    def setValues(self, values, sign=1):
+    def setValues(self, values: dict[str, int | float], sign=1):
         signText = '+' if sign > 0 else '-'
         self.signCombobox.setCurrentText(signText)
         for unit, value in values.items():
-            values[unit].setValue(value)
+            spinbox = self.spinboxesMapper[unit]
+            spinbox.setValue(value)
     
     def emitValueChanged(self, value):
         self.sigValueChanged.emit(self.values())
@@ -11094,3 +11221,84 @@ class OverlayChannelToolButton(GradientToolButton):
             return
         
         self.action.setVisible(visible)
+
+class YeazV2SelectModelNameCombobox(ComboBox):
+    sigValueChanged = Signal(str)
+    
+    def __init__(
+            self, *args, 
+            custom_select_item_text='Select custom weights file...', 
+            **kwargs
+        ):
+        super().__init__( *args, **kwargs)
+        self._csi_text = custom_select_item_text
+        self.sigTextChanged.connect(self.onTextChanged)
+        self.initItems()
+    
+    def initItems(self):
+        from cellacdc.models.YeaZ_v2 import load_models_filepath
+        models_name, models_name_filepath_mapper = load_models_filepath()
+        self.addItems(models_name)
+    
+    def onTextChanged(self, text):
+        if text != self._csi_text:
+            return
+        
+        start_dir = myutils.getMostRecentPath()
+        model_filepath = qtpy.compat.getopenfilename(
+            parent=self, 
+            caption='Select YeaZ weights file', 
+            filters='All Files (*)',
+            basedir=start_dir
+        )[0]
+        if not model_filepath:
+            self.setCurrentIndex(0)
+            return
+        
+        msg = html_utils.paragraph(f"""
+        Insert a <b>name</b> for the following YeaZ model:<br><br>
+        <code>{model_filepath}</code><br>
+        """)
+        modelNameWindow = apps.QLineEditDialog(
+            title='Insert a name for the model',
+            msg=msg,
+            allowEmpty=False,
+            parent=self
+        )
+        modelNameWindow.exec_()
+        if modelNameWindow.cancel:
+            self.setCurrentIndex(0)
+            return
+
+        model_name = modelNameWindow.enteredValue
+        
+        from cellacdc.models.YeaZ_v2 import add_model_filepath
+        add_model_filepath(model_name, model_filepath)
+        
+        self.addItem(model_name)
+        self.setCurrentText(model_name)
+        
+        print(
+            'YeaZ_v2 model added!\n\n'
+            f'  * Name: {model_name}\n'
+            f'  * File path: {model_filepath}\n'
+        )
+    
+    def addItem(self, item):
+        idx = self.count() - 1
+        self.insertItem(idx, item)
+    
+    def addItems(self, items):
+        super().clear()
+        super().addItems(items)
+        super().addItem(self._csi_text)
+        idx = len(items)
+        font = self.font()
+        font.setItalic(True)
+        self.setItemData(idx, font, Qt.FontRole)
+    
+    def setValue(self, value: str):
+        self.setCurrentText(value)
+    
+    def value(self, *args):
+        return self.currentText()
