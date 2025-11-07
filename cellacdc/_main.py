@@ -75,6 +75,16 @@ except Exception as e:
         traceback.print_exc()
     SPOTMAX_INSTALLED = False
 
+try:
+    from pyama_acdc import add_pyama_workflow_action
+
+    PYAMA_ACDC_INSTALLED = True
+except Exception as e:
+    if not isinstance(e, ModuleNotFoundError):
+        traceback.print_exc()
+    PYAMA_ACDC_INSTALLED = False
+    add_pyama_workflow_action = None
+
 def restart():
     QCoreApplication.quit()
     process = QtCore.QProcess()
@@ -444,6 +454,13 @@ class mainWin(QMainWindow):
         utilsMenu.addAction(self.renameAction)
 
         self.utilsMenu = utilsMenu
+
+        if PYAMA_ACDC_INSTALLED and add_pyama_workflow_action is not None:
+            utilsMenu.addSeparator()
+            try:
+                self.pyamaWorkflowAction = add_pyama_workflow_action(self)
+            except Exception as err:
+                printl(f'Failed to add PyAMA workflow action: {err}')
 
         utilsMenu.addSeparator()
         utilsHelpAction = utilsMenu.addAction('Help...')
