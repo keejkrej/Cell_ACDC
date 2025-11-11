@@ -75,15 +75,22 @@ except Exception as e:
         traceback.print_exc()
     SPOTMAX_INSTALLED = False
 
+pyama_logo_path = None
+pyama_icon_path = None
+
 try:
-    from pyama_acdc import add_pyama_workflow_action
+    import pyama_acdc
+    from pyama_acdc import _run as pyamaRun
+
+    pyama_logo_path = getattr(pyama_acdc, 'logo_path', None)
+    pyama_icon_path = getattr(pyama_acdc, 'icon_path', None)
 
     PYAMA_ACDC_INSTALLED = True
 except Exception as e:
     if not isinstance(e, ModuleNotFoundError):
         traceback.print_exc()
     PYAMA_ACDC_INSTALLED = False
-    add_pyama_workflow_action = None
+    pyamaRun = None
 
 def restart():
     QCoreApplication.quit()
@@ -203,6 +210,16 @@ class mainWin(QMainWindow):
             spotmaxButton.clicked.connect(self.launchSpotmaxGui)
             modulesButtonsGroupBoxLayout.addWidget(spotmaxButton)
         
+        if PYAMA_ACDC_INSTALLED:
+            pyamaButton = QPushButton('  PyAMA')
+            if pyama_logo_path and os.path.exists(pyama_logo_path):
+                pyamaButton.setIcon(QIcon(pyama_logo_path))
+                pyamaButton.setIconSize(QSize(iconSize,iconSize))
+            pyamaButton.setFont(font)
+            pyamaButton.clicked.connect(self.launchPyamaWorkflow)
+            self.pyamaButton = pyamaButton
+            modulesButtonsGroupBoxLayout.addWidget(pyamaButton)
+        
         mainLayout.addWidget(modulesButtonsGroupBox)
         mainLayout.addSpacing(10)
         
@@ -252,6 +269,7 @@ class mainWin(QMainWindow):
 
         self.guiWins = []
         self.spotmaxWins = []
+        self.pyamaWins = []
         self.dataPrepWins = []
         self._version = None
         self.progressWin = None
@@ -454,13 +472,6 @@ class mainWin(QMainWindow):
         utilsMenu.addAction(self.renameAction)
 
         self.utilsMenu = utilsMenu
-
-        if PYAMA_ACDC_INSTALLED and add_pyama_workflow_action is not None:
-            utilsMenu.addSeparator()
-            try:
-                self.pyamaWorkflowAction = add_pyama_workflow_action(self)
-            except Exception as err:
-                printl(f'Failed to add PyAMA workflow action: {err}')
 
         utilsMenu.addSeparator()
         utilsHelpAction = utilsMenu.addAction('Help...')
@@ -1996,6 +2007,51 @@ class mainWin(QMainWindow):
 
         QTimer.singleShot(300, partial(self._launchSpotMaxGui, splashScreen))
     
+    def launchPyamaWorkflow(self, checked=False):
+        if not PYAMA_ACDC_INSTALLED or pyamaRun is None:
+            msg = widgets.myMessageBox()
+            msg.critical(
+                self, 'PyAMA', 'PyAMA workflow integration is not available.'
+            )
+            return
+
+        splashScreen = None
+        if pyama_logo_path and os.path.exists(pyama_logo_path):
+            splashScreen = QSplashScreen()
+            splashScreen.setPixmap(QPixmap(pyama_logo_path))
+            splashScreen.show()
+
+        QTimer.singleShot(200, partial(self._launchPyamaWorkflow, splashScreen))
+
+    def _launchPyamaWorkflow(self, splashScreen=None):
+        try:
+            pyamaWin = pyamaRun.run_gui(
+                app=self.app,
+                mainWin=self,
+                launcherSlot=self.launchPyamaWorkflow,
+                icon_path=pyama_icon_path,
+            )
+        except Exception as err:
+            self.logger.error(f'Failed to launch PyAMA workflow: {err}')
+            msg = widgets.myMessageBox()
+            msg.critical(
+                self, 'PyAMA', 'Unable to launch the PyAMA workflow dialog.'
+            )
+            if splashScreen is not None:
+                splashScreen.close()
+            return
+
+        pyamaWin.sigClosed.connect(self.pyamaGuiClosed)
+        self.pyamaWins.append(pyamaWin)
+        if splashScreen is not None:
+            splashScreen.close()
+
+    def pyamaGuiClosed(self, pyamaWin):
+        try:
+            self.pyamaWins.remove(pyamaWin)
+        except ValueError:
+            pass
+    
     def _launchSpotMaxGui(self, splashScreen):
         self.logger.info('Launching spotMAX...')
         spotmaxWin = spotmaxRun.run_gui(
@@ -2149,6 +2205,8 @@ class mainWin(QMainWindow):
         self.guiButton.setMinimumHeight(int(h*f))
         if hasattr(self, 'spotmaxButton'):
             self.spotmaxButton.setMinimumHeight(int(h*f))
+        if hasattr(self, 'pyamaButton'):
+            self.pyamaButton.setMinimumHeight(int(h*f))
         self.showAllWindowsButton.setMinimumHeight(int(h*f))
         self.restartButton.setMinimumHeight(int(int(h*f)))
         self.closeButton.setMinimumHeight(int(int(h*f)))
@@ -2182,6 +2240,8 @@ class mainWin(QMainWindow):
             openModules.extend(self.guiWins)
         if self.spotmaxWins:
             openModules.extend(self.spotmaxWins)
+        if self.pyamaWins:
+            openModules.extend(self.pyamaWins)
         return openModules
 
 
