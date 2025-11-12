@@ -52,10 +52,8 @@ from qtpy.QtGui import (
 from qtpy.QtWidgets import (
     QAction, QLabel, QPushButton, QHBoxLayout, QSizePolicy,
     QMainWindow, QMenu, QToolBar, QGroupBox, QGridLayout,
-    QScrollBar, QCheckBox, QToolButton, QSpinBox,
-    QComboBox, QButtonGroup, QActionGroup, QFileDialog,
-    QAbstractSlider, QMessageBox, QWidget, QGridLayout, QDockWidget,
-    QGraphicsProxyWidget, QVBoxLayout, QRadioButton, 
+    QScrollBar, QCheckBox, QToolButton, QSpinBox, QButtonGroup, QActionGroup, QFileDialog, QAbstractSlider, QMessageBox, QWidget, QGridLayout, 
+    QDockWidget, QGraphicsProxyWidget, QVBoxLayout, QRadioButton, 
     QSpacerItem, QScrollArea, QFormLayout, QGraphicsSceneMouseEvent 
 )
 
@@ -3587,7 +3585,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             'Draw only overlay segm. masks',
             'Draw nothing'
         ]
-        self.drawIDsContComboBox = QComboBox()
+        self.drawIDsContComboBox = widgets.ComboBox()
         self.drawIDsContComboBox.setFont(_font)
         self.drawIDsContComboBox.addItems(self.drawIDsContComboBoxSegmItems)
         self.drawIDsContComboBox.setVisible(False)
@@ -3710,7 +3708,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         # z-slice scrollbars
         self.zSliceScrollBar = widgets.linkedQScrollbar(Qt.Horizontal)
 
-        self.zProjComboBox = QComboBox()
+        self.zProjComboBox = widgets.ComboBox()
         self.zProjComboBox.setFont(_font)
         self.zProjComboBox.addItems([
             'single z-slice',
@@ -3736,7 +3734,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         _z_label.setDisabled(True)
         self.overlay_z_label = _z_label
 
-        self.zProjOverlay_CB = QComboBox()
+        self.zProjOverlay_CB = widgets.ComboBox()
         self.zProjOverlay_CB.setFont(_font)
         self.zProjOverlay_CB.addItems([
             'single z-slice', 'max z-projection', 'mean z-projection',
@@ -3839,7 +3837,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.rightBottomGroupbox.setChecked(False)
         self.rightBottomGroupbox.hide()
 
-        self.annotateRightHowCombobox = QComboBox()
+        self.annotateRightHowCombobox = widgets.ComboBox()
         self.annotateRightHowCombobox.setFont(_font)
         self.annotateRightHowCombobox.addItems(self.drawIDsContComboBoxSegmItems)
         self.annotateRightHowCombobox.setCurrentIndex(
@@ -13725,6 +13723,8 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             self.mergeObjsTempLine.setData([], [])
     
     def Brush_cb(self, checked):
+        self.showEditIDwidgets(checked)
+        self.enableSizeSpinbox(checked)
         if checked:
             self.typingEditID = False
             self.setDiskMask()
@@ -13740,8 +13740,6 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             c = self.defaultToolBarButtonColor
             self.eraserButton.setStyleSheet(f'background-color: {c}')
             self.connectLeftClickButtons()
-            self.enableSizeSpinbox(True)
-            self.showEditIDwidgets(True)
             self.setFocusGraphics()
         else:
             self.ax1_lostObjScatterItem.setVisible(True)
@@ -13752,8 +13750,6 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             self.setHoverToolSymbolData(
                 [], [], (self.ax2_BrushCircle, self.ax1_BrushCircle),
             )
-            self.enableSizeSpinbox(False)
-            self.showEditIDwidgets(False)
             self.resetCursors()
     
     def showEditIDwidgets(self, visible):
@@ -14004,6 +14000,8 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         )
 
     def Eraser_cb(self, checked):
+        self.showEditIDwidgets(checked)
+        self.enableSizeSpinbox(checked)
         if checked:
             self.setDiskMask()
             self.setHoverToolSymbolData(
@@ -14015,13 +14013,11 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             c = self.defaultToolBarButtonColor
             self.brushButton.setStyleSheet(f'background-color: {c}')
             self.connectLeftClickButtons()
-            self.enableSizeSpinbox(True)
         else:
             self.setHoverToolSymbolData(
                 [], [], (self.ax1_EraserCircle, self.ax2_EraserCircle,
                          self.ax1_EraserX, self.ax2_EraserX)
             )
-            self.enableSizeSpinbox(False)
             self.resetCursors()
             self.updateAllImages()
     
@@ -31494,15 +31490,21 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             Do you want to <b>concatenate</b> the `acdc_output.csv` tables from 
             multiple Positions into <b>one single CSV file</b>?<br>
         """)
-        msg = widgets.myMessageBox()
+        msg = widgets.myMessageBox(wrapText=False)
         noButton, yesButton = msg.question(
             self, 'Concatenate tables?', txt, buttonsTexts=('No', 'Yes')
         )
         if not msg.clickedButton == yesButton:
             return
         
-        posData = self.data[self.pos_i]
-        self.mainWin.launchConcatUtil(exp_folderpath=posData.exp_path)
+        txt = html_utils.paragraph(f"""
+            To <b>concatenate</b> the `acdc_output.csv` tables from 
+            multiple Positions and multiple experiments<br>
+            launch the concatenation utility from the top menubar of the Cell-ACDC main launcher:<br><br>
+            <code>Utilities --> Concatenate --> Concatenate acdc output tables from multiple Positions and experiments...</code>.
+        """)
+        msg = widgets.myMessageBox(wrapText=False)
+        msg.information(self, 'How to concatenate tables', txt)
         
     def updateSegmDataAutoSaveWorker(self):
         # Update savedSegmData in autosave worker
