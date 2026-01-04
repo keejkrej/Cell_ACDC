@@ -41,6 +41,7 @@ from .utils import toObjCoords as utilsToObjCoords
 from .utils import acdcToSymDiv as utilsSymDiv
 from .utils import trackSubCellObjects as utilsTrackSubCell
 from .utils import createConnected3Dsegm as utilsConnected3Dsegm
+from .utils import countObjects as utilsCountObjectsInSegm
 from .utils import fucciPreprocess as utilsFucciPreprocess
 from .utils import customPreprocess as utilsCustomPreprocess
 from .utils import combineChannels as utilsCombineChannels
@@ -451,6 +452,7 @@ class mainWin(QMainWindow):
 
         measurementsMenu = utilsMenu.addMenu('Measurements')
         measurementsMenu.addAction(self.calcMetricsAcdcDf)
+        measurementsMenu.addAction(self.countObjectsInSegmAction)
         measurementsMenu.addAction(self.combineMetricsMultiChannelAction) 
         measurementsMenu.addAction(self.generateMothBudTotTableAction) 
         
@@ -459,7 +461,9 @@ class mainWin(QMainWindow):
         if SPOTMAX_INSTALLED:
             concatMenu.addAction(self.concatSpotmaxDfsAction) 
 
-        dataPrepMenu = utilsMenu.addMenu('Image preprocessing')
+        dataPrepMenu = utilsMenu.addMenu(
+            'Image and segmentation files preprocessing'
+        )
                  
         dataPrepMenu.addAction(self.batchConverterAction)
         dataPrepMenu.addAction(self.repeatDataPrepAction)
@@ -776,7 +780,11 @@ class mainWin(QMainWindow):
         )
 
         self.combineChannelsAction = QAction(
-            'Combine channels...'
+            'Combine channels and/or segmentation files...'
+        )
+        
+        self.countObjectsInSegmAction = QAction(
+            'Count objects in segmentation mask and save to CSV file...'
         )
         
         self.createConnected3Dsegm = QAction(
@@ -889,6 +897,11 @@ class mainWin(QMainWindow):
 
         self.combineChannelsAction.triggered.connect(
             self.launchCombineChannelsUtil
+        )
+        
+        
+        self.countObjectsInSegmAction.triggered.connect(
+            self.launchCountObjectsInSegmActionUtil
         )
         
         self.createConnected3Dsegm.triggered.connect(
@@ -1099,7 +1112,11 @@ class mainWin(QMainWindow):
         
         return posPath
 
-    def getSelectedExpPaths(self, utilityName, exp_folderpath=None, custom_txt=None):
+    def getSelectedExpPaths(
+            self, utilityName, 
+            exp_folderpath=None, 
+            custom_txt=None
+        ):
         # self._debug()
         
         if exp_folderpath is None:
@@ -1197,7 +1214,7 @@ class mainWin(QMainWindow):
             return
 
         if len(expPaths) > 1 or is_multi_pos:
-            infoPaths = self.getInfoPosStatus(expPaths)
+            infoPaths = self.getInfoPosStatus(expPaths, utilityName)
             selectPosWin = apps.selectPositionsMultiExp(
                 expPaths, 
                 infoPaths=infoPaths, 
@@ -1590,6 +1607,23 @@ class mainWin(QMainWindow):
         )
         self.connected3DsegmWin.show()
     
+    def launchCountObjectsInSegmActionUtil(self):
+        self.logger.info(f'Launching utility "{self.sender().text()}"')
+        selectedExpPaths = self.getSelectedExpPaths(
+            'Create connected 3D segmentation mask'
+        )
+        if selectedExpPaths is None:
+            return
+        
+        title = 'Count objects in segmentation mask'
+        infoText = 'Launching count objects in segmentation masks process...'
+        progressDialogueTitle = 'Counting objects in segmentation mask'
+        self.connected3DsegmWin = utilsCountObjectsInSegm.CountObjectsInsegm(
+            selectedExpPaths, self.app, title, infoText, progressDialogueTitle,
+            parent=self
+        )
+        self.connected3DsegmWin.show()
+    
     def launchFillHolesActionUtil(self):
         self.logger.info(f'Launching utility "{self.sender().text()}"')
         selectedExpPaths = self.getSelectedExpPaths(
@@ -1701,13 +1735,17 @@ class mainWin(QMainWindow):
         )
         self.toSymDivWin.show()
     
-    def getInfoPosStatus(self, expPaths):
+    def getInfoPosStatus(self, expPaths, utilityName):
+        if 'spotmax' in utilityName.lower():
+            caller = 'SpotMAX'
+        else:
+            caller = 'Cell-ACDC'
         infoPaths = {}
         for exp_path, posFoldernames in expPaths.items():
             posFoldersInfo = {}
             for pos in posFoldernames:
                 pos_path = os.path.join(exp_path, pos)
-                status = myutils.get_pos_status(pos_path)
+                status = myutils.get_pos_status(pos_path, caller=caller)
                 posFoldersInfo[pos] = status
             infoPaths[exp_path] = posFoldersInfo
         return infoPaths
@@ -2112,7 +2150,8 @@ class mainWin(QMainWindow):
             f'Launching utility "Concatenate tables from multipe positions"'
         )
         selectedExpPaths = self.getSelectedExpPaths(
-            'Concatenate spotMAX output files', exp_folderpath=exp_folderpath
+            'Concatenate spotMAX output files', 
+            exp_folderpath=exp_folderpath,
         )
         if selectedExpPaths is None:
             return

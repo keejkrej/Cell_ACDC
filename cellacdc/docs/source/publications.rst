@@ -1,12 +1,27 @@
+.. _Google Scholar: https://scholar.google.com/scholar?hl=en&as_sdt=2005&sciodt=0,5&cites=5370866519324948412&scipsc=&q=&scisbd=1
+
 Scientific publications where Cell-ACDC was used
 ================================================
+
+.. figure:: citations/citations_per_year.png
+    :width: 50%
+    :align: center
+    :alt: Citations per year from Google Scholar
+    :target: https://scholar.google.com/scholar?hl=en&as_sdt=2005&sciodt=0,5&cites=5370866519324948412&scipsc=&q=&scisbd=1
+
+    Citations per year. Data from `Google Scholar`_.
 
 In the following publications, authors used Cell-ACDC to analyse microscopy data and obtain **biological insights**:
 
 .. raw:: html
 
     <ol>
-      <li>Akanksha, A., et al. <i>Microfluidic analysis of salt-stress-mediated antibiotic tolerance in Mycobacterium smegmatis</i>. <b>Lab on a Chip</b> (2025) DOI: <a href="https://doi.org/10.1039/D5LC00713E>10.1039/D5LC00713E"</a>.</li><br>
+      <li>Wunder, T., et al. <i>Conserved and Lineage-Specific Roles of KEA-Mediated Ion Homeostasis in Chlamydomonas</i>. <b>bioRxiv</b> (2025) DOI: <a href="https://doi.org/10.64898/2025.12.03.692059">10.64898/2025.12.03.692059</a>.</li><br>
+      <li>Gao, X., et al. <i>Yeast growth is controlled by the proportional scaling of mRNA and ribosome concentrations</i>. <b>arXiv</b> (2025) DOI: <a href="https://doi.org/10.48550/arXiv.2508.14997">10.48550/arXiv.2508.14997</a>.</li><br>
+      <li>Garrigós, V., et al. <i>Tsa1-Mediated Regulation of PKA Tunes Trehalose Metabolism in Saccharomyces cerevisiae</i>. <b>bioRxiv</b> (2025) DOI: <a href="https://doi.org/10.1101/2025.11.26.690464">10.1101/2025.11.26.690464</a>.</li><br>
+      <li>Muñoz-Barrera, M., et al. <i>HLH-30/TFEB is necessary for chromatin reorganization and maintenance of cell quiescence during starvation in C. elegans</i>. <b>bioRxiv</b> (2025) DOI: <a href="https://doi.org/10.1101/2025.10.31.685810">10.1101/2025.10.31.685810</a>.</li><br>
+      <li>Kim, J., et al. <i>A Fkh1/2 binding site array in the WHI5 promoter drives sub-scaling transcription</i>. <b>bioRxiv</b> (2025) DOI: <a href="https://doi.org/10.1101/2025.10.10.681508">10.1101/2025.10.10.681508</a>.</li><br>
+      <li>Akanksha, A., et al. <i>Microfluidic analysis of salt-stress-mediated antibiotic tolerance in Mycobacterium smegmatis</i>. <b>Lab on a Chip</b> (2025) DOI: <a href="https://doi.org/10.1039/D5LC00713E">10.1039/D5LC00713E</a>.</li><br>
       <li>Saydee-Onwubiko, U. N., et al. <i>Apoptosis promotes fertility in C. elegans by maintaining functional germline morphology</i>. <b>bioRxiv</b> (2025) DOI: <a href="https://doi.org/10.1101/2025.10.22.683972">10.1101/2025.10.22.683972</a>.</li><br>
       <li>Proulx-Giraldeau, F. , et al. <i>Division Asymmetry Drives Cell Size Variability in Budding Yeast</i>. <b>bioRxiv</b> (2025) DOI: <a href="https://doi.org/10.1101/2025.10.22.683920">10.1101/2025.10.22.683920</a>.</li><br>
       <li>Kukhtevich, I. , et al. <i>The origin of septin ring size control in budding yeast</i>. <b>The EMBO Journal</b> (2025) DOI: <a href="https://doi.org/10.1038/s44318-025-00571-5">10.1038/s44318-025-00571-5</a>.</li><br>

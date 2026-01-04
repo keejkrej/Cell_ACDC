@@ -227,6 +227,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.mainWin = mainWin
         self.app = app
         self.closeGUI = False
+        self._acdc_version = myutils.read_version()
 
         self.setAcceptDrops(True)
         self._appName = 'Cell-ACDC'
@@ -395,7 +396,9 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             icon = QIcon(":icon.ico")
         super().setWindowIcon(icon)
     
-    def setWindowTitle(self, title="Cell-ACDC - GUI"):
+    def setWindowTitle(self, title=None):
+        if title is None:
+            title = f'Cell-ACDC v{self._acdc_version} - GUI'
         super().setWindowTitle(title)
     
     def initProfileModels(self):
@@ -3038,6 +3041,28 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
     def customLevelsLutChanged(self, levels, imageItem=None):
         imageItem.setLevels(levels)
     
+    def getPreComputedMinMaxZstack(self, channel: str):
+        if channel != self.user_ch_name:
+            return None
+        
+        posData = self.data[self.pos_i]
+        zstack_min, zstack_max = np.inf, 0
+        for z in range(posData.SizeZ):
+            key = (self.pos_i, posData.frame_i, z)
+            levels = self.img1.minMaxValuesMapper.get(key)
+            if levels is None:
+                return
+            
+            img_min, img_max = levels
+            if img_min < zstack_min:
+                zstack_min = img_min
+            
+            if img_max > zstack_max:
+                zstack_max = img_max
+        
+        return (zstack_min, zstack_max)
+    
+    # @exec_time
     def rescaleIntensitiesLut(
             self, 
             action: QAction=None, 
@@ -3088,7 +3113,11 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             levels_key = (how, posData.frame_i)
             levels = lutLevelsCh.get(levels_key)
             if levels is None:
-                levels = (image_data.min(), image_data.max())
+                levels = self.getPreComputedMinMaxZstack(channel)
+                
+            if levels is None:
+                image_zstack = image_data[posData.frame_i]
+                levels = (image_zstack.min(), image_zstack.max())
             lutLevelsCh[levels_key] = levels
             imageItem.setLevels(levels)
         elif how == 'Rescale across time frames':            
@@ -4858,7 +4887,8 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                     msg='You clicked on the background.<br>'
                         'Enter here ID(s) that you want to delete<br><br>'
                         'You can enter multiple IDs separated by comma',
-                    parent=self, allowedValues=posData.IDs,
+                    parent=self, 
+                    allowedValues=posData.IDs,
                     defaultTxt=str(nearest_ID),
                     allowList=True,
                     isInteger=True
@@ -5983,7 +6013,6 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
     
     def onCtrlReleased(self):
         self.xyOnCtrlPressedFirstTime = None
-        self.isCtrlDown = False
     
     def gui_hoverEventImg1(self, event, isHoverImg1=True):
         try:
@@ -7048,11 +7077,13 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.gui_mouseReleaseEventImg1(event)
     
     def drawTempRulerLine(self, event):
+        modifiers = QGuiApplication.keyboardModifiers()
+        ctrl = modifiers == Qt.ControlModifier
         x, y = event.pos()
         x1, y1 = int(x), int(y)
         xxRA, yyRA = self.ax1_rulerAnchorsItem.getData()
         x0, y0 = xxRA[0], yyRA[0]
-        if self.isCtrlDown:
+        if ctrl:
             x1, y1 = transformation.snap_xy_to_closest_angle(
                 x0, y0, x1, y1
             )
@@ -7499,10 +7530,12 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 self.ax1_rulerAnchorsItem.setData([xdata], [ydata])
                 self.tempSegmentON = True
             else:
+                modifiers = QGuiApplication.keyboardModifiers()
+                ctrl = modifiers == Qt.ControlModifier
                 self.tempSegmentON = False
                 xxRA, yyRA = self.ax1_rulerAnchorsItem.getData()
                 x0, y0 = xxRA[0], yyRA[0]
-                if self.isCtrlDown:
+                if ctrl:
                     x1, y1 = transformation.snap_xy_to_closest_angle(
                         x0, y0, xdata, ydata
                     )
@@ -9493,12 +9526,16 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         ID = self.currentLab2D[ydata, xdata]
         return ID
     
-    def getHoverID(self, xdata, ydata):
+    def getHoverID(self, xdata, ydata, byPassShiftCheck=False):
         if not hasattr(self, 'diskMask'):
             return 0
         
         modifiers = QGuiApplication.keyboardModifiers()
         ctrl = modifiers == Qt.ControlModifier
+        if byPassShiftCheck:
+            shift = False
+        else:
+            shift = modifiers == Qt.ShiftModifier
 
         if self.isPowerBrush() and not ctrl:
             return 0        
@@ -9514,9 +9551,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         if self.isSegm3D:
             z = self.z_lab()
             SizeZ = posData.lab.shape[0]
-            doNotLinkThroughZ = (
-                self.brushButton.isChecked() and self.isShiftDown
-            )
+            doNotLinkThroughZ = self.brushButton.isChecked() and shift
             if doNotLinkThroughZ:
                 if self.brushHoverCenterModeAction.isChecked() or ID>0:
                     hoverID = ID
@@ -9563,7 +9598,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 else:
                     hoverID = 0
         else:
-            if self.brushButton.isChecked() and self.isShiftDown:
+            if self.brushButton.isChecked() and shift:
                 # Force new ID with brush and Shift
                 hoverID = 0
             elif self.brushHoverCenterModeAction.isChecked() or ID>0:
@@ -9578,9 +9613,14 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
 
     def setHoverToolSymbolColor(
             self, xdata, ydata, pen, ScatterItems, button,
-            brush=None, hoverRGB=None, ID=None
+            brush=None, hoverRGB=None, ID=None, byPassShiftCheck=False
         ):
-
+        modifiers = QGuiApplication.keyboardModifiers()
+        if byPassShiftCheck:
+            shift = False
+        else:
+            shift = modifiers == Qt.ShiftModifier
+        
         posData = self.data[self.pos_i]
         Y, X = self.get_2Dlab(posData.lab).shape
         if not myutils.is_in_bounds(xdata, ydata, X, Y):
@@ -9588,10 +9628,12 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
 
         self.isHoverZneighID = False
         if ID is None:
-            hoverID = self.getHoverID(xdata, ydata)
+            hoverID = self.getHoverID(
+                xdata, ydata, byPassShiftCheck=byPassShiftCheck
+            )
         else:
             hoverID = ID
-
+        
         if hoverID == 0:
             for item in ScatterItems:
                 item.setPen(pen)
@@ -9608,7 +9650,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 pass
         
         checkChangeID = (
-            self.isHoverZneighID and not self.isShiftDown
+            self.isHoverZneighID and not shift
             and self.lastHoverID != hoverID
         )
         if checkChangeID:
@@ -12540,7 +12582,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.stopCcaIntegrityCheckerWorker()
         self.setAutoSaveSegmentationEnabled(False)
         if prevMode == 'Normal division: Lineage tree':
-            self.lin_tree_ask_changes()
+            self.askLineageTreeChanges()
             self.lineage_tree = None
             self.editLin_TreeBar.setVisible(False)
             self.uncheckAllButtonsFromButtonGroup(self.editLin_TreeGroup)
@@ -12900,8 +12942,8 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                     msg='You are not hovering on any ID.\n'
                         'Enter the ID that you want to lock.',
                     parent=self, 
-                    allowedValues=posData.IDs,
-                    isInteger=True
+                    isInteger=True,
+                    defaultTxt=self.setBrushID(return_val=True)
                 )
                 win.exec_()
                 if win.cancel:
@@ -12918,7 +12960,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 self.navigateScrollBar.maximum()-1
             )
             self.ax1.sigRangeChanged.connect(self.highlightManualAnnotMode)
-            self.ax1.setHighlighted(True)
+            self.ax1.setHighlighted(True, color='green')
         else:
             self.autoIDcheckbox.setChecked(self.manualAnnotState['isAutoID'])
             self.editIDspinbox.setValue(self.manualAnnotState['editID'])
@@ -12958,6 +13000,21 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
     
     def highlightManualAnnotMode(self, viewBox, viewRange):
         self.ax1.setHighlighted(True)
+    
+    def updateHighlightedAxis(self):
+        if not self.manualAnnotFutureButton.isChecked():
+            return
+        
+        frame_to_restore = self.manualAnnotState.get('frame_i_to_restore')
+        posData = self.data[self.pos_i]
+        if posData.frame_i == frame_to_restore:
+            color = 'green'
+        elif posData.frame_i < frame_to_restore:
+            color = 'gold'
+        else:
+            color = 'red'
+        
+        self.ax1.setHighlightingRectItemsColor(color)
         
     def updateLostNewCurrentIDs(self):
         posData = self.data[self.pos_i]
@@ -13440,7 +13497,11 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
 
         # Restore ID previously hovered
         if ID != self.ax1BrushHoverID and not self.isMouseDragImg1:
-            self.restoreHoverObjBrush()
+            try:
+                self.restoreHoverObjBrush()
+            except Exception as e:
+                self.ax1BrushHoverID = 0
+                return
 
         # Hide items hover ID
         if ID != 0:
@@ -13510,70 +13571,10 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         else:
             activeCategories = self.countObjsWindow.activeCategories()
             
-        posData = self.data[self.pos_i]
-        numObjsCurrentFrame = len(posData.IDs)
-        
-        uniqueIDsVisited = None
-        uniqueIDsAll = None
-        numObjsVisitedFrames = None
-        numObjsTotal = None
-        if 'Unique objects in all visited frames' in activeCategories:
-            uniqueIDsVisited = set()
-        
-        if 'Unique objects in entire video' in activeCategories:
-            uniqueIDsAll = set()
-        
-        if 'In all visited frames' in activeCategories:
-            numObjsVisitedFrames = 0
-        
-        if 'In entire video' in activeCategories:
-            numObjsTotal = 0
-            
-        for frame_i in range(len(posData.segm_data)):
-            lab = posData.allData_li[frame_i]['labels']
-            if lab is not None:
-                IDsFrame = posData.allData_li[frame_i]['IDs']
-                
-                if uniqueIDsVisited is not None:
-                    uniqueIDsVisited.update(IDsFrame)
-                
-                if uniqueIDsAll is not None:
-                    uniqueIDsAll.update(IDsFrame)
-                
-                numObjsFrame = len(IDsFrame)
-                
-                if numObjsVisitedFrames is not None:
-                    numObjsVisitedFrames += numObjsFrame
-                    
-                if numObjsTotal is not None:
-                    numObjsTotal += numObjsFrame
-            else:
-                lab = posData.segm_data[frame_i]
-                
-                if numObjsTotal is not None or numObjsTotal is not None:
-                    rp = skimage.measure.regionprops(posData.segm_data[frame_i])
-                
-                if numObjsTotal is not None:
-                    numObjsTotal += len(rp)
-                    
-                if uniqueIDsAll is not None:
-                    uniqueIDsAll.update([obj.label for obj in rp])
-        
-        numUniqueObjsVisitedFrames = None
-        if uniqueIDsVisited is not None:
-            numUniqueObjsVisitedFrames = len(uniqueIDsVisited)
-        
-        numUniqueObjsTotal = None
-        if uniqueIDsAll is not None:
-            numUniqueObjsTotal = len(uniqueIDsAll)
-        
-        allCategoryCountMapper = {
-            'In current frame': numObjsCurrentFrame, 
-            'In all visited frames': numObjsVisitedFrames, 
-            'In entire video': numObjsTotal, 
-            'Unique objects in all visited frames': numUniqueObjsVisitedFrames, 
-            'Unique objects in entire video': numUniqueObjsTotal
-        }
+        posData = self.data[self.pos_i]        
+        allCategoryCountMapper = posData.countObjectsInSegmTimelapse(
+            activeCategories
+        )
         if self.countObjsWindow is None:
             return allCategoryCountMapper 
         
@@ -14467,10 +14468,9 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             return
 
         if ev.key() == Qt.Key_Control:
-            if not self.isCtrlDown:
+            if not ctrl:
                 self.wasCtrlPressedFirstTime = True
                 self.onCtrlPressedFirstTime()
-            self.isCtrlDown = True
         
         if ev.key() == Qt.Key_PageDown:
             self.onKeyPageDown()
@@ -14496,7 +14496,6 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             and not isCtrlModifier and not isShiftModifier
         )
         if isShiftModifier:
-            self.isShiftDown = True
             if self.brushButton.isChecked():
                 # Force default brush symbol with shift down
                 self.setHoverToolSymbolColor(
@@ -14696,22 +14695,29 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         # else:
         #     self.drawIDsContComboBox.setCurrentIndex(0)
 
+    def updateBrushCursorOnShiftRelease(self):        
+        xdata, ydata = int(self.xHoverImg), int(self.yHoverImg)
+        self.setHoverToolSymbolColor(
+            xdata, ydata, self.ax2_BrushCirclePen,
+            (self.ax2_BrushCircle, self.ax1_BrushCircle),
+            self.brushButton, brush=self.ax2_BrushCircleBrush,
+            byPassShiftCheck=True
+        )
+        if self.isSegm3D:
+            self.changeBrushID()
+    
+    def onShiftReleased(self):
+        if self.brushButton.isChecked() and self.xHoverImg is not None:
+            self.updateBrushCursorOnShiftRelease()
+    
     def keyReleaseEvent(self, ev):
         if self.app.overrideCursor() == Qt.SizeAllCursor:
             self.app.restoreOverrideCursor()
         if ev.key() == Qt.Key_Control:
             self.onCtrlReleased()
         elif ev.key() == Qt.Key_Shift:
-            if self.isSegm3D and self.xHoverImg is not None:
-                # Restore normal brush cursor when releasing shift
-                xdata, ydata = int(self.xHoverImg), int(self.yHoverImg)
-                self.setHoverToolSymbolColor(
-                    xdata, ydata, self.ax2_BrushCirclePen,
-                    (self.ax2_BrushCircle, self.ax1_BrushCircle),
-                    self.brushButton, brush=self.ax2_BrushCircleBrush
-                )
-                self.changeBrushID()
-            self.isShiftDown = False
+            self.onShiftReleased()
+            
         canRepeat = (
             ev.key() == Qt.Key_Left
             or ev.key() == Qt.Key_Right
@@ -15437,10 +15443,11 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         
         posData = self.data[self.pos_i]
         if ID not in posData.IDs:
-            self.manualTrackingButton = None
+            self.manualBackgroundObj = None
             self.manualBackgroundToolbar.showWarning(
                 f'The ID {ID} does not exist'
             )
+            self.manualBackgroundObjItem.clear()
             return
         
         ID_idx = posData.IDs_idxs[ID]
@@ -17861,6 +17868,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.restartZoomAutoPilot()
         self.initManualBackgroundObject()
         self.updateObjectCounts()
+        self.updateItemsMousePos()
 
     def prev_pos(self):
         self.store_data(debug=False, autosave=False)
@@ -17963,171 +17971,132 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             posData.tracked_lost_centroids[frame_i] = accepted_lost_centroids
         return True
     
+    def askInitCcaFirstFrame(self):
+        mode = str(self.modeComboBox.currentText())
+        if mode != 'Cell cycle analysis':
+            return True
+        
+        posData = self.data[self.pos_i]
+        if posData.frame_i != 0:
+            return True
+        
+        editCcaWidget = apps.editCcaTableWidget(
+            posData.cca_df, posData.SizeT, parent=self,
+            title='Initialize cell cycle annotations'
+        )
+        editCcaWidget.sigApplyChangesFutureFrames.connect(
+            self.applyManualCcaChangesFutureFrames
+        )
+        editCcaWidget.exec_()
+        if editCcaWidget.cancel:
+            self.resetNavigateFramesScrollbar()
+            return False
+        
+        if posData.cca_df is not None:
+            is_cca_same_as_stored = (
+                (posData.cca_df == editCcaWidget.cca_df).all(axis=None)
+            )
+            if not is_cca_same_as_stored:
+                reinit_cca = self.warnEditingWithCca_df(
+                    'Re-initialize cell cyle annotations first frame',
+                    return_answer=True
+                )
+                if reinit_cca:
+                    self.resetCcaFuture(0)
+                    
+        posData.cca_df = editCcaWidget.cca_df
+        self.store_cca_df()
+        
+        return True
+    
+    def askInitLinTreeFirstFrame(self):
+        mode = str(self.modeComboBox.currentText())
+        if mode != 'Normal division: Lineage tree':
+            return True
+        
+        posData = self.data[self.pos_i]
+        if posData.frame_i != 0:
+            return True
+        
+        if self.lineage_tree is None:
+            self.initLinTree() 
+        
+        return True
+    
+    # @exec_time
     def next_frame(self, warn=True):
-        # ok = self.warnOGIDs()
-        # if not ok:
-        #     self.resetNavigateScrollbar()
-        #     return
-        benchmark=False
-        if benchmark:
-            ts = [time.perf_counter()]
-            titles = ['']
+        proceed = self.askInitCcaFirstFrame()
+        if not proceed:
+            return
+        
+        proceed = self.askInitLinTreeFirstFrame()
+        if not proceed:
+            return
+        
         mode = str(self.modeComboBox.currentText())
         posData = self.data[self.pos_i]
-        if posData.frame_i < posData.SizeT-1:
-            proceed = self.warnLostObjects()
-            if not proceed:
-                self.resetNavigateScrollbar()
-                return
-
-            if posData.frame_i <= 0:
-                if mode == 'Cell cycle analysis':
-                    # posData.IDs = [obj.label for obj in posData.rp]
-                    editCcaWidget = apps.editCcaTableWidget(
-                        posData.cca_df, posData.SizeT, parent=self,
-                        title='Initialize cell cycle annotations'
-                    )
-                    editCcaWidget.sigApplyChangesFutureFrames.connect(
-                        self.applyManualCcaChangesFutureFrames
-                    )
-                    editCcaWidget.exec_()
-                    if editCcaWidget.cancel:
-                        self.resetNavigateFramesScrollbar()
-                        return
-                    if posData.cca_df is not None:
-                        is_cca_same_as_stored = (
-                            (posData.cca_df == editCcaWidget.cca_df).all(axis=None)
-                        )
-                        if not is_cca_same_as_stored:
-                            reinit_cca = self.warnEditingWithCca_df(
-                                'Re-initialize cell cyle annotations first frame',
-                                return_answer=True
-                            )
-                            if reinit_cca:
-                                self.resetCcaFuture(0)
-                    posData.cca_df = editCcaWidget.cca_df
-                    self.store_cca_df()
-                elif mode == 'Normal division: Lineage tree':
-                    if self.lineage_tree is None:
-                        self.initLinTree()         
-
-            # Store data for current frame
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('Innit stuff')
-            if mode != 'Viewer':
-                self.store_data(debug=False)
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('store_data')
-            # Go to next frame
-
-            self.lin_tree_ask_changes()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('lin_tree_ask_changes')
-            posData.frame_i += 1
-            self.removeAlldelROIsCurrentFrame()
-            proceed_cca, never_visited = self.get_data()
-            if not proceed_cca:
-                posData.frame_i -= 1
-                self.get_data()
-                self.logger.info(
-                    'No data for current frame. '
-                )
-                return
-            
-            if mode == 'Segmentation and Tracking' or self.isSnapshot:
-                self.addExistingDelROIs()
-            
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('get_data')
-            self.updatePreprocessPreview()
-            self.updateCombineChannelsPreview()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('update preview')
-
-            self.postProcessing()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('postprocessing')
-            self.tracking(storeUndo=True, wl_update=False) # wl stuff handles later...
-
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('tracking')
-
-            notEnoughG1Cells, proceed = self.attempt_auto_cca()
-            if notEnoughG1Cells or not proceed:
-                posData.frame_i -= 1
-                self.get_data()
-                self.setAllTextAnnotations()
-                self.logger.info(
-                    'Not enough G1 cells to compute cell cycle annotations.'
-                )
-                return
-
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('cca stuff')
-            
-            self.store_zslices_rp()
-
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('store_zslices_rp')
-            self.resetExpandLabel()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('resetExpandLabel')
-            self.updateAllImages()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('updateAllImages')
-            self.updateViewerWindow()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('updateViewerWindow')
-            self.updateLastVisitedFrame(last_visited_frame_i=posData.frame_i-1)
-            self.setNavigateScrollBarMaximum()
-            self.updateScrollbars()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('scrollbar and last visited frame update')
-            self.computeSegm()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('computeSegm')
-            self.initGhostObject()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('initGhostObject')
-            self.whitelistPropagateIDs()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('whitelist stuff')
-            self.zoomToCells()
-            self.updateObjectCounts()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('zoomToCells')
-        else:
+        
+        if posData.frame_i >= posData.SizeT-1:
             # Store data for current frame
             if mode != 'Viewer':
                 self.store_data(debug=False)
             msg = 'You reached the last segmented frame!'
             self.logger.info(msg)
             self.titleLabel.setText(msg, color=self.titleColor)
-    
-        if benchmark:
-            time_taken = time.perf_counter() - ts[0]
-            print(f'\nTotal time for next_frame: {time_taken:.2f}s')
-            for i in range(1, len(ts)):
-                time_taken = ts[i] - ts[i-1]
-                print(f'Time taken for {titles[i]}: {time_taken:.2f}s')
-            print('')
+            return
+
+        proceed = self.warnLostObjects()
+        if not proceed:
+            self.resetNavigateScrollbar()
+            return     
+
+        # Store data for current frame
+        if mode != 'Viewer':
+            self.store_data(debug=False)
+
+        self.askLineageTreeChanges()
+        posData.frame_i += 1
+        self.removeAlldelROIsCurrentFrame()
+        proceed_cca, never_visited = self.get_data()
+        if not proceed_cca:
+            posData.frame_i -= 1
+            self.get_data()
+            self.logger.info(
+                'No data for current frame. '
+            )
+            return
+        
+        if mode == 'Segmentation and Tracking' or self.isSnapshot:
+            self.addExistingDelROIs()
+        
+        self.updatePreprocessPreview()
+        self.updateCombineChannelsPreview()
+        self.postProcessing()
+        self.tracking(storeUndo=True, wl_update=False) 
+        notEnoughG1Cells, proceed = self.attempt_auto_cca()
+        if notEnoughG1Cells or not proceed:
+            posData.frame_i -= 1
+            self.get_data()
+            self.setAllTextAnnotations()
+            self.logger.info(
+                'Not enough G1 cells to compute cell cycle annotations.'
+            )
+            return
+        
+        self.store_zslices_rp()
+        self.resetExpandLabel()
+        self.updateAllImages()
+        self.updateHighlightedAxis()
+        self.updateViewerWindow()
+        self.updateLastVisitedFrame(last_visited_frame_i=posData.frame_i-1)
+        self.setNavigateScrollBarMaximum()
+        self.updateScrollbars()
+        self.computeSegm()
+        self.initGhostObject()
+        self.whitelistPropagateIDs()
+        self.zoomToCells()
+        self.updateItemsMousePos()
+        self.updateObjectCounts()
 
     @disableWindow
     def get_difference_table(self, return_css_separated=False, return_differece=False):
@@ -18282,7 +18251,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 )
 
     @disableWindow
-    def lin_tree_ask_changes(self):
+    def askLineageTreeChanges(self):
         """
         Asks the user for changes in the lineage tree.
 
@@ -18306,7 +18275,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             posData.frame_i = self.original_df_lin_tree_i
             self.get_data()
             self.logger.info('Lineage tree changes were not propagated, going back to original frame.')
-            self.lin_tree_ask_changes()
+            self.askLineageTreeChanges()
             self.store_data(autosave=False)
             posData.frame_i = og_frame
             self.get_data()
@@ -18427,81 +18396,42 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 self.navigateScrollBar.setMaximum(i+1)
                 self.navSpinBox.setMaximum(i+1)
 
-    def prev_frame(self,):
-        benchmark = False
-        if benchmark:
-            ts = [time.perf_counter()]
-            titles = ['']
+    # @exec_time
+    def prev_frame(self):
         posData = self.data[self.pos_i]    
-        if posData.frame_i > 0:
-            # Store data for current frame
-            mode = str(self.modeComboBox.currentText())
-            if mode != 'Viewer':
-                self.store_data(debug=False)
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('store_data')
-            self.removeAlldelROIsCurrentFrame()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('removeAlldelROIsCurrentFrame')
-            
-
-            self.lin_tree_ask_changes()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('lin_tree_ask_changes')
-            posData.frame_i -= 1
-            _, never_visited = self.get_data()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('get_data')
-            
-            if mode == 'Segmentation and Tracking' or self.isSnapshot:
-                self.addExistingDelROIs()
-            
-            self.resetExpandLabel()
-            self.updatePreprocessPreview()
-            self.updateCombineChannelsPreview()
-            self.postProcessing()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('preview updated, reset expand labels, prost processing')
-            self.tracking()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('tracking')
-            self.whitelistPropagateIDs(update_lab=True)
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('whitelist stuff')
-            self.updateAllImages()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('updateAllImages')
-            self.updateScrollbars()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('updateScrollbars')
-            self.zoomToCells()
-            self.initGhostObject()
-            self.updateViewerWindow()
-            self.updateObjectCounts()
-            if benchmark:
-                ts.append(time.perf_counter())
-                titles.append('zoomToCells, initGhostObject, updateViewerWindow')
-        else:
+        if posData.frame_i <= 0:
             msg = 'You reached the first frame!'
             self.logger.info(msg)
             self.titleLabel.setText(msg, color=self.titleColor)
+            return
         
-        if benchmark:
-            time_taken = time.perf_counter() - ts[0]
-            print(f'\nTotal time for prev_frame: {time_taken:.2f}s')
-            for i in range(1, len(ts)):
-                time_taken = ts[i] - ts[i-1]
-                print(f'Time taken for {titles[i]}: {time_taken:.2f}s')
-            print('')
+        # Store data for current frame
+        mode = str(self.modeComboBox.currentText())
+        if mode != 'Viewer':
+            self.store_data(debug=False)
+            
+        self.removeAlldelROIsCurrentFrame()           
+        self.askLineageTreeChanges()
+        posData.frame_i -= 1
+        _, never_visited = self.get_data()
+        
+        if mode == 'Segmentation and Tracking' or self.isSnapshot:
+            self.addExistingDelROIs()
+        
+        self.resetExpandLabel()
+        self.updatePreprocessPreview()
+        self.updateCombineChannelsPreview()
+        self.postProcessing()
+        self.tracking()
+        self.whitelistPropagateIDs(update_lab=True)
+        self.updateAllImages()
+        self.updateScrollbars()
+        self.updateHighlightedAxis()
+        self.zoomToCells()
+        self.initGhostObject()
+        self.updateViewerWindow()
+        self.updateItemsMousePos()
+        self.updateObjectCounts()
 
     def loadSelectedData(self, user_ch_file_paths, user_ch_name):
         data = []
@@ -18950,10 +18880,11 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.viewCombineChannelDataToggle.setChecked(checked)
         self.updateCombineChannelsPreview()
     
-    def combineCurrentImage(self, 
-                            steps: List[Dict[str, Any]]=None,
-                            keep_input_data_type:bool=None,
-                            ):
+    def combineCurrentImage(
+            self, 
+            steps: List[Dict[str, Any]]=None,
+            keep_input_data_type:bool=None,
+        ):
 
         if steps and keep_input_data_type is None:
             raise ValueError('keep_input_data_type must be set if steps is set')
@@ -19309,7 +19240,9 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.initManualBackgroundImage()
         self.initPixelSizePropsDockWidget()
 
-        self.setWindowTitle(f'Cell-ACDC - GUI - "{posData.exp_path}"')
+        self.setWindowTitle(
+            f'Cell-ACDC v{self._acdc_version} - GUI - "{posData.exp_path}"'
+        )
         
         self.setupPreprocessing()
         self.setupCombiningChannels()
@@ -20043,6 +19976,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             computeContours=False,
             updateLookuptable=True
         )
+        self.updateItemsMousePos()
         if self.isSegm3D:
             self.updateObjectCounts()
 
@@ -20263,10 +20197,8 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
 
         self.splineHoverON = False
         self.tempSegmentON = False
-        self.isCtrlDown = False
         self.xyOnCtrlPressedFirstTime = None
         self.typingEditID = False
-        self.isShiftDown = False
         self.prevAnnotOptions = None
         self.ghostObject = None
         self.autoContourHoverON = False
@@ -20538,13 +20470,22 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             self.PosScrollBarReleased()
 
     def PosScrollBarMoved(self, pos_n):
+        if self.navigateScrollBarStartedMoving:
+            self.store_data() 
+            
         self.pos_i = pos_n-1
         self.updateFramePosLabel()
         proceed_cca, never_visited = self.get_data()
         self.updateAllImages()
         self.setStatusBarLabel()
+        self.navigateScrollBarStartedMoving = False
 
     def PosScrollBarReleased(self):
+        self.navigateScrollBarStartedMoving = True
+        if self.pos_i == self.navigateScrollBar.sliderPosition()-1:
+            # Slider released without changing value --> do nothing
+            return
+        
         self.pos_i = self.navigateScrollBar.sliderPosition()-1
         self.updateFramePosLabel()
         self.updatePos()
@@ -20595,6 +20536,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.updateFramePosLabel()
         self.updateViewerWindow()
         self.updateTimestampFrame()
+        self.updateHighlightedAxis()
         self.navigateScrollBarStartedMoving = False
 
     def framesScrollBarReleased(self):
@@ -22937,20 +22879,6 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         lut[0] = [0,0,0,0]
         self.keepIDsTempLayerLeft.setLevels([0, len(lut)])
         self.keepIDsTempLayerLeft.setLookupTable(lut)
-
-        # # Gray out objects
-        # alpha = self.imgGrad.labelsAlphaSlider.value()
-        # self.labelsLayerImg1.setOpacity(alpha/3)
-        # self.labelsLayerRightImg.setOpacity(alpha/3)
-
-        # # Gray out contours
-        # imageItem = self.getContoursImageItem(0)
-        # if imageItem is not None:
-        #     imageItem.setOpacity(0.3)
-        
-        # imageItem = self.getContoursImageItem(1)
-        # if imageItem is not None:
-        #     imageItem.setOpacity(0.3)
         
     
     def updateTempLayerKeepIDs(self):
@@ -23434,7 +23362,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         selectOverlayLabels = widgets.QDialogListbox(
             'Select segmentation to overlay',
             'Select segmentation file to overlay:\n',
-            list(self.existingSegmEndNames), 
+            natsorted(self.existingSegmEndNames), 
             multiSelection=True, 
             parent=self
         )
@@ -24477,10 +24405,12 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         self.setOverlayImages()
     
     def setOverlayTransparency(self, transparent: bool):
-        self.rgbaImg1.setOpacity(float(transparent))
+        opacity = float(transparent)
+        opacity = opacity if opacity < 1.0 else 0.999
+        self.rgbaImg1.setOpacity(opacity)
         
         if transparent:
-            self.img1.setOpacity(0.01, applyToLinked=False)
+            self.img1.setOpacity(0.0, applyToLinked=False)
             self.imgGrad.sigLookupTableChanged.connect(
                 self.updateTransparentOverlayRgba
             )
@@ -24528,8 +24458,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
                 lastChannel = selectedChannels[-1]
                 self.setCheckedOverlayContextMenusActions(selectedChannels)
                 imageItem = self.overlayLayersItems[lastChannel][0]
-                self.setOpacityOverlayLayersItems(0.5, imageItem=imageItem)
-                self.img1.setOpacity(0.5)
+                self.setOpacityOverlayLayersItems(None, imageItem=imageItem)
                 self.setOverlayChannelsToolbuttonsChecked()
 
             self.setRetainSizePolicyLutItems()
@@ -24553,7 +24482,8 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             categoryCountMapper = self.countObjects()
             self.countObjsWindow = apps.ObjectCountDialog(
                 categoryCountMapper=categoryCountMapper, 
-                parent=self
+                parent=self,
+                data=self.data
             )
             self.countObjsWindow.sigShowEvent.connect(self.updateObjectCounts)
             self.countObjsWindow.sigUpdateCounts.connect(self.updateObjectCounts)
@@ -28984,6 +28914,9 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         if cancel:
             return False
         
+        if self.overlayToolbar.isTransparent():
+            self.overlayToolbar.setTransparent(False)
+        
         self.secondLevelToolbar.setVisible(False)
         
         self.gui_createLazyLoader()
@@ -29273,6 +29206,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
 
         ch_name_selector.setUserChannelName()
         self.user_ch_name = user_ch_name
+        self.img1.channelName = user_ch_name
 
         self.AutoPilotProfile.storeSelectedChannel(self.user_ch_name)
 
@@ -30264,10 +30198,14 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         
         toolbutton.clicked.connect(self.overlayChannelToolbuttonClicked)
         
+        alphaScrollBar.toolbutton = toolbutton
+        
         return imageItem, lutItem, alphaScrollBar, toolbutton
     
     def addAlphaScrollbar(self, channelName, imageItem):
         alphaScrollBar = widgets.ScrollBar(Qt.Horizontal)
+        imageItem.alphaScrollBar = alphaScrollBar
+        alphaScrollBar.channelName = channelName
         
         label = QLabel(f'Alpha {channelName}')
         label.setFont(_font)
@@ -30292,7 +30230,9 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             alphaScrollBar, self.alphaScrollbarRow, 1, 1, 2
         )
 
-        alphaScrollBar.valueChanged.connect(self.setOpacityOverlayLayersItems)
+        alphaScrollBar.valueChanged.connect(
+            partial(self.setOpacityOverlayLayersItems, scrollbar=alphaScrollBar)
+        )
 
         self.alphaScrollbarRow += 1
         return alphaScrollBar
@@ -30331,21 +30271,21 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
     def setOverlayItemsVisible(self):
         for channel, items in self.overlayLayersItems.items():
             _, lutItem, alphaSB, toolbutton = items[:4]
-            if not self.overlayButton.isChecked():
-                lutItem.hide()
-                alphaSB.hide()
-                alphaSB.label.hide()
-                toolbutton.setVisible(False)
-            elif channel in self.checkedOverlayChannels:
+            lutItem.hide()
+            alphaSB.hide()
+            alphaSB.label.hide()
+            toolbutton.setVisible(False)    
+        
+        if not self.overlayButton.isChecked():
+            return
+        
+        for channel, items in self.overlayLayersItems.items():
+            _, lutItem, alphaSB, toolbutton = items[:4]
+            if channel in self.checkedOverlayChannels:
                 lutItem.show()
                 alphaSB.show()
                 alphaSB.label.show()
                 toolbutton.setVisible(True)
-            else:
-                lutItem.hide()
-                alphaSB.hide()
-                alphaSB.label.hide()
-                toolbutton.setVisible(False)
 
     def overlayChannelToolbuttonClicked(self, checked=False, toolbutton=None):
         if toolbutton is None:
@@ -30385,28 +30325,32 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
             or n_checked_buttons == 1
         )
         
+        channel_opacity_mapper = self.getOpacitiesFromAlphaScrollbarValues()
+        
         # Set opacity of every layer accordingly
         for channel, otherToolbutton in self.allOverlayToolbuttons.items():          
             if channel == self.user_ch_name:
                 otherImageItem = self.img1
                 alphaScrollbar = None
-                alpha_value = 0.5
+                # alpha_value = channel_opacity_mapper[channel]
             else:
                 otherItems = self.overlayLayersItems[channel]
                 otherImageItem = otherItems[0]
                 alphaScrollbar = otherItems[2]
-                alpha_value = alphaScrollbar.value()/alphaScrollbar.maximum()
+                # alpha_value = alphaScrollbar.value()/alphaScrollbar.maximum()
             
             if otherToolbutton.isChecked() and isSingleChannel:
                 op_val = 1.0
             elif otherToolbutton.isChecked():
-                op_val = alpha_value
+                op_val = channel_opacity_mapper[channel]
             else:
                 op_val = 0.0
             
             if op_val == 0:
                 op_val = 0.01
 
+            op_val = op_val if op_val < 1.0 else 0.999
+            
             otherImageItem.setOpacity(op_val, applyToLinked=False)
             
             if alphaScrollbar is None:
@@ -30422,13 +30366,28 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
         gradient = colors.get_pg_gradient((bkgrColor, foregrColor))
         lutItem.setGradient(gradient)
     
-    def setOpacityOverlayLayersItems(self, value, imageItem=None):
+    def setOpacityOverlayLayersItems(self, value, imageItem=None, scrollbar=None):
+        if scrollbar is None:
+            scrollbar = imageItem.alphaScrollBar
+
+        channel = scrollbar.channelName
+        toolbutton = self.allOverlayToolbuttons[channel]
+        if not toolbutton.isChecked() or not toolbutton.isVisible():
+            return
+        
+        if value is None:
+            value = scrollbar.value()
+            
         if imageItem is None:
             imageItem = self.sender().imageItem
-            alpha = value/self.sender().maximum()
+            opacity = value/self.sender().maximum()
         else:
-            alpha = value
-        imageItem.setOpacity(alpha)
+            opacity = value
+        
+        opacity = opacity if opacity < 1.0 else 0.999
+        opacity = opacity if opacity > 0.0 else 0.001
+        
+        imageItem.setOpacity(opacity)
         
     def showInExplorer_cb(self):
         posData = self.data[self.pos_i]
@@ -31406,7 +31365,7 @@ class guiWin(QMainWindow, whitelist.WhitelistGUIElements):
     def saveData(self, checked=False, finishedCallback=None, isQuickSave=False):
         self.setDisabled(True, keepDisabled=True)
 
-        self.lin_tree_ask_changes()
+        self.askLineageTreeChanges()
 
         self.store_data(autosave=False)
         self.applyDelROIs()

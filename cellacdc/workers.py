@@ -520,10 +520,13 @@ class AlignDataWorker(QObject):
             if filename_tif != user_ch_filename:
                 continue
             
+            if not self.align:
+                continue
+
             # Align based on user_ch_name
             aligned = True
-            if self.align:
-                self.logger.log(f'Aligning: {tif}')
+            self.logger.log(f'Aligning: {tif}')
+
             tif_data = load.imread(tif)
             numFramesWith0s = self.dataPrepWin.detectTifAlignment(
                 tif_data, self.posData
@@ -591,12 +594,16 @@ class AlignDataWorker(QObject):
             if tif.endswith(f'{self.user_ch_name}.tif'):
                 continue
             
+            if not self.align:
+                continue
+
             # Align the other channels
             if self.posData.loaded_shifts is None:
                 break
+
             if self.align:
                 self.logger.log(f'Aligning: {tif}')
-            tif_data = load.imread(tif)
+                tif_data = load.imread(tif)
 
             # Alignment routine
             if self.posData.SizeZ>1:
@@ -3136,8 +3143,10 @@ class ConcatAcdcDfsWorker(BaseWorkerUtil):
         debugging = False
         expPaths = self.mainWin.expPaths
         tot_exp = len(expPaths)
+        
         self.signals.initProgressBar.emit(0)
         acdc_dfs_allexp = []
+        acdc_objs_count_dfs_allexp = {}
         keys_exp = []
         for i, (exp_path, pos_foldernames) in enumerate(expPaths.items()):
             self.errors = {}
@@ -3153,9 +3162,13 @@ class ConcatAcdcDfsWorker(BaseWorkerUtil):
                     return
 
             selectedAcdcOutputEndname = self.mainWin.selectedAcdcOutputEndnames[0]
+            selectedAcdcObjsCountEndname = selectedAcdcOutputEndname.replace(
+                'acdc_output', 'acdc_objects_count'
+            )
 
             self.signals.initProgressBar.emit(len(pos_foldernames))
             acdc_dfs = []
+            acdc_objs_count_dfs = {}
             keys = []
             for p, pos in enumerate(pos_foldernames):
                 if self.abort:
@@ -3183,6 +3196,17 @@ class ConcatAcdcDfsWorker(BaseWorkerUtil):
                     )
                     self.signals.progressBar.emit(1)
                     continue
+                
+                acdc_objs_count_file = [
+                    f for f in ls 
+                    if f.endswith(f'{selectedAcdcObjsCountEndname}.csv')
+                ]
+                if acdc_objs_count_file:
+                    df_count_filepath = os.path.join(
+                        images_path, acdc_objs_count_file[0]
+                    )
+                    df_count = pd.read_csv(df_count_filepath)
+                    acdc_objs_count_dfs[pos] = df_count
                 
                 acdc_df_filepath = os.path.join(images_path, acdc_output_file[0])
                 acdc_df = pd.read_csv(acdc_df_filepath).set_index('Cell_ID')
@@ -3239,6 +3263,12 @@ class ConcatAcdcDfsWorker(BaseWorkerUtil):
                     self.sigAborted.emit()
                     return
             
+            acdc_objs_count_df_allpos_filename = (
+                self.concat_df_filename.replace(
+                    'acdc_output', 'acdc_objects_count'
+                )
+            )
+            
             acdc_dfs_allpos_filepath = os.path.join(
                 allpos_dir, self.concat_df_filename
             )
@@ -3250,6 +3280,29 @@ class ConcatAcdcDfsWorker(BaseWorkerUtil):
             to_format_func = getattr(acdc_df_allpos, self._to_format)
             to_format_func(acdc_dfs_allpos_filepath)
             self.acdc_dfs_allpos_filepath = acdc_dfs_allpos_filepath
+            
+            if not acdc_objs_count_dfs:
+                continue
+            
+            acdc_objs_count_df_allpos = pd.concat(
+                acdc_objs_count_dfs, names=['Position_n']
+            )
+            acdc_objs_count_df_allpos['experiment_folderpath'] = exp_path
+            
+            acdc_objs_count_df_allpos_filepath = os.path.join(
+                allpos_dir, acdc_objs_count_df_allpos_filename
+            )
+            
+            self.logger.log(
+                'Saving all positions objects count file to '
+                f'"{acdc_objs_count_df_allpos_filepath}"'
+            )
+            to_format_func = getattr(acdc_objs_count_df_allpos, self._to_format)
+            to_format_func(acdc_objs_count_df_allpos_filepath)
+            
+            acdc_objs_count_dfs_allexp[(exp_path, exp_name)] = (
+                acdc_objs_count_df_allpos
+            )
         
         if len(keys_exp) <= 1:
             self.signals.finished.emit(self)
@@ -3277,6 +3330,24 @@ class ConcatAcdcDfsWorker(BaseWorkerUtil):
         )
         to_format_func = getattr(acdc_df_allexp, self._to_format)
         to_format_func(acdc_dfs_allexp_filepath)
+        
+        if acdc_objs_count_dfs_allexp:
+            allexp_count_df_filename = (
+                f'multiExp_{acdc_objs_count_df_allpos_filename}'
+            )
+            acdc_objs_count_df_allexp = pd.concat(
+                acdc_objs_count_dfs_allexp,
+                names=['experiment_folderpath', 'experiment_foldername']
+            )
+            acdc_objs_count_df_allexp_filepath = os.path.join(
+                self.allExpSaveFolder, allexp_count_df_filename
+            )
+            self.logger.log(
+                'Saving multiple experiments concatenated file to '
+                f'"{acdc_objs_count_df_allexp_filepath}"'
+            )
+            to_format_func = getattr(acdc_objs_count_df_allexp, self._to_format)
+            to_format_func(acdc_objs_count_df_allexp_filepath)
 
         self.signals.finished.emit(self)
 
@@ -5865,38 +5936,43 @@ class CombineChannelsWorkerUtil(BaseWorkerUtil):
             keep_input_data_type: bool,
             n_threads: int = None
         ):
-
-        channel_name_first = steps[1]['channel']
         save_filepaths = []
-        for image_path in image_paths:
-            ch_filepath = load.get_filename_from_channel(image_path, channel_name_first)
+        images_path_to_process = []
+        out_ext = '.npz'
+        basename_ext = 'segm_'
+        for images_path in image_paths:
+            for step_n, step in steps.items():
+                channel = step['channel']
+                if '_segm' not in channel:
+                     basename_ext = ''
+                     
+                image_filepath = load.get_filepath_from_endname(
+                    images_path, channel
+                )
+                _, ext = os.path.splitext(image_filepath)
+                if ext != '.npz':
+                    out_ext = '.tif'
+                    basename_ext = ''
+                    break
 
-            _, ext = os.path.splitext(ch_filepath)
-
-            posData = load.loadData(ch_filepath, channel_name_first) 
-            posData.getBasenameAndChNames()
-            posData.buildPaths()
-            posData.loadOtherFiles(
-                load_segm_data=False,
-                load_metadata=True,
-            )
-
-            basename = posData.basename
+            basename, channels = myutils.getBasenameAndChNames(images_path)
+            
             savename = (
-                f'{basename}{appended_text_filename}{ext}'
+                f'{basename}{basename_ext}{appended_text_filename}{out_ext}'
             )
-        
-            save_filepaths = save_filepaths + [os.path.join(image_path, savename)]
 
+            images_path_to_process.append(images_path)
+            save_filepaths.append(os.path.join(images_path, savename))
+        
         core.combine_channels_multithread(
             steps=steps,
-            image_paths=image_paths,
+            images_paths=images_path_to_process,
             keep_input_data_type=keep_input_data_type,
             save_filepaths=save_filepaths,
             signals=self.signals,
             logger_func=self.logger.log,
             n_threads=n_threads
-            )
+        )
     
     @worker_exception_handler
     def run(self):
@@ -6445,4 +6521,78 @@ class GenerateMotherBudTotalTableWorker(BaseWorkerUtil):
         
         out_df.to_csv(self.out_csv_filepath)
         
+        self.signals.finished.emit(self)
+    
+class CountObjectsInSegm(BaseWorkerUtil):
+    sigAskAppendName = Signal(str, list)
+    sigAborted = Signal()
+
+    def __init__(self, mainWin):
+        super().__init__(mainWin)
+    
+    @worker_exception_handler
+    def run(self):
+        debugging = False
+        expPaths = self.mainWin.expPaths
+        tot_exp = len(expPaths)
+        self.signals.initProgressBar.emit(0)
+        for i, (exp_path, pos_foldernames) in enumerate(expPaths.items()):
+            self.errors = {}
+            tot_pos = len(pos_foldernames)
+
+            self.mainWin.infoText = f'Select <b>segmentation file to count</b>'
+            abort = self.emitSelectSegmFiles(exp_path, pos_foldernames)
+            if abort:
+                self.sigAborted.emit()
+                return
+
+            self.signals.initProgressBar.emit(len(pos_foldernames))
+            for p, pos in enumerate(pos_foldernames):
+                if self.abort:
+                    self.sigAborted.emit()
+                    return
+
+                self.logger.log(
+                    f'Processing experiment n. {i+1}/{tot_exp}, '
+                    f'{pos} ({p+1}/{tot_pos})'
+                )
+
+                images_path = os.path.join(exp_path, pos, 'Images')
+                endFilenameSegm = self.mainWin.endFilenameSegm
+                ls = myutils.listdir(images_path)
+                file_path = [
+                    os.path.join(images_path, f) for f in ls 
+                    if f.endswith(f'{endFilenameSegm}.npz')
+                ][0]
+                
+                posData = load.loadData(file_path, '')
+
+                self.signals.sigUpdatePbarDesc.emit(
+                    f'Processing {posData.pos_path}')
+
+                posData.getBasenameAndChNames()
+                posData.buildPaths()
+
+                posData.loadOtherFiles(
+                    load_segm_data=True,
+                    load_acdc_df=False,
+                    load_metadata=True,
+                    end_filename_segm=endFilenameSegm
+                )
+                if posData.segm_data.ndim == 3:
+                    posData.segm_data = posData.segm_data[np.newaxis]
+                
+                self.logger.log('Counting objects...')
+                
+                countMapper = posData.countObjectsInSegm()
+                countMapper.pop('In current frame', None)
+                df_count_endname = posData.saveObjCounts(countMapper)
+                
+                self.logger.log(
+                    'Saved object counts table to file ending with: '
+                    f'"{df_count_endname}"'
+                )
+                
+                self.signals.progressBar.emit(1)
+
         self.signals.finished.emit(self)

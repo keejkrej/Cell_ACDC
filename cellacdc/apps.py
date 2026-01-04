@@ -1958,9 +1958,10 @@ class SetMeasurementsDialog(QBaseDialog):
         groupsLayout.setColumnStretch(current_col, 3)
         row += 1
 
-        props_info_txt = measurements.get_props_info_txt()
-        props_names = measurements.get_props_names()
-        rp_desc = {prop_name:props_info_txt for prop_name in props_names}
+        props_info_txt_mapper = measurements.get_props_info_txt_mapper(
+            isSegm3D=isSegm3D
+        )
+        rp_desc = props_info_txt_mapper
         regionPropsQGBox = widgets._metricsQGBox(
             rp_desc, 'Morphological properties',
             favourite_funcs=favourite_funcs, isZstack=isZstack
@@ -2580,7 +2581,7 @@ class SetMeasurementsDialog(QBaseDialog):
                     if not checkBox.isChecked():
                         continue
                     
-                    section = self.chIndipendCustomeMetricsQGBox.title()
+                    section = self.mixedChannelsCombineMetricsQGBox.title()
                     current_selected_meas[section][checkBox.text()] = 'Yes'
         
         return current_selected_meas
@@ -2963,12 +2964,9 @@ class SetMeasurementsDialog(QBaseDialog):
         super().show(block=block)
 
 class QDialogMetadataXML(QDialog):
-    sigDimensionOrderEditFinished = Signal(str, int, int, object)
-
     def __init__(
             self, title='Metadata',
-            LensNA=1.0, DimensionOrder=None, rawFilename='test',
-            SizeT=1, SizeZ=1, SizeC=1, SizeS=1,
+            LensNA=1.0, rawFilename='test', SizeT=1, SizeZ=1, SizeC=1, SizeS=1,
             TimeIncrement=1.0, TimeIncrementUnit='s',
             PhysicalSizeX=1.0, PhysicalSizeY=1.0, PhysicalSizeZ=1.0,
             PhysicalSizeUnit='μm', ImageName='', chNames=None, emWavelens=None,
@@ -2992,8 +2990,6 @@ class QDialogMetadataXML(QDialog):
         font = QFont()
         font.setPixelSize(12)
         self.setFont(font)
-        if DimensionOrder is None:
-            DimensionOrder = 'ztc' # default for .czi and .nd2
 
         mainLayout = QVBoxLayout()
         entriesLayout = QGridLayout()
@@ -3379,18 +3375,6 @@ class QDialogMetadataXML(QDialog):
         self.setLayout(mainLayout)
         # self.setModal(True)
 
-    def dimensionOrderChanged(self, dimsOrder):
-        if self.imageViewer is None:
-            return
-        
-        idx = self.imageViewer.channelIndex
-        imgData = self.sampleImgData[dimsOrder][idx] 
-        if self.imageViewer.posData.SizeT == 1:
-            self.imageViewer.posData.img_data = [imgData] # single frame data
-        else:
-            self.imageViewer.posData.img_data = imgData
-        self.imageViewer.update_img()
-
     def saveCh_checkBox_cb(self, state):
         self.checkChNames()
         idx = self.saveChannels_QCBs.index(self.sender())
@@ -3767,7 +3751,6 @@ class QDialogMetadataXML(QDialog):
 
     def getValues(self):
         self.LensNA = self.LensNA_DSB.value()
-        self.DimensionOrder = self.DimensionOrderCombo.currentText()
         self.SizeT = self.SizeT_SB.value()
         self.SizeZ = self.SizeZ_SB.value()
         self.SizeC = self.SizeC_SB.value()
@@ -7605,7 +7588,9 @@ class imageViewer(QMainWindow):
 
         self.frame_i = posData.frame_i
         self.num_frames = posData.SizeT
-        self.setWindowTitle(f"Cell-ACDC - {posData.relPath}")
+        
+        version = myutils.read_version()
+        self.setWindowTitle(f"Cell-ACDC v{version} - {posData.relPath}")
 
     def gui_createActions(self):
         # File actions
@@ -9245,66 +9230,93 @@ class askStopFrameSegm(QDialog):
         super().__init__(parent)
         self.setWindowTitle('Enter stop frame')
 
+        self.visualizeWindows = []
+
         mainLayout = QVBoxLayout()
-        formLayout = QFormLayout()
         buttonsLayout = QHBoxLayout()
 
         # Message
         infoTxt = html_utils.paragraph("""
-            Enter a <b>stop frame number</b> when to stop<br>
+            Enter a <b>stop frame number</b> when to stop 
             segmentation for each Position loaded:
         """)
         infoLabel = QLabel(infoTxt, self)
-        _font = QFont()
-        _font.setPixelSize(12)
-        infoLabel.setFont(_font)
         infoLabel.setAlignment(Qt.AlignCenter)
         # padding: top, left, bottom, right
         infoLabel.setStyleSheet("padding:0px 0px 8px 0px;")
 
         self.dataDict = {}
 
+        exp_path_pos_mapper = path.get_exp_path_pos_foldernames_mapper(
+            user_ch_file_paths
+        )
+
+        columnsLayout = QHBoxLayout()
+        mainScrollArea = widgets.ScrollArea()
+        mainScrollAreaWidget = QWidget()
+        mainScrollAreaWidget.setLayout(columnsLayout)
+        mainScrollArea.setWidget(mainScrollAreaWidget)
+        self.mainScrollArea = mainScrollArea
+
         # Form layout widget
         self.spinBoxes = []
         self.tab_idx = 0
-        for (i, img_path) in enumerate(user_ch_file_paths):
-            pos_foldername = os.path.basename(
-                os.path.dirname(
-                    os.path.dirname(img_path)
+        iter_items = exp_path_pos_mapper.items()
+        self.groupboxScrollAreas = []
+        
+        for col, (exp_path, pos_folders_files) in enumerate(iter_items):
+            groupboxScrollArea = widgets.ScrollArea()
+            self.groupboxScrollAreas.append(groupboxScrollArea)
+            groupbox = QGroupBox()
+            groupbox.setCheckable(False)
+            groupbox.setToolTip(exp_path)
+            groupboxLayout = QFormLayout()
+            groupbox.setLayout(groupboxLayout)
+            groupboxScrollArea.setWidget(groupbox)
+            columnsLayout.addWidget(groupboxScrollArea)
+            pos_folders = pos_folders_files['pos_foldernames']
+            filenames = pos_folders_files['filenames']
+            for i, pos_foldername in enumerate(pos_folders):
+                img_filename = filenames[i]
+                images_path = os.path.join(exp_path, pos_foldername, 'Images')
+                img_path = os.path.join(images_path, img_filename)
+                spinBox = widgets.mySpinBox()
+                spinBox.sigTabEvent.connect(self.keyTabEventSpinbox)
+                posData = load.loadData(img_path, user_ch_name, QParent=parent)
+                posData.getBasenameAndChNames()
+                posData.buildPaths()
+                posData.loadOtherFiles(
+                    load_segm_data=False,
+                    load_metadata=True,
+                    loadSegmInfo=True,
                 )
+                spinBox.setMaximum(posData.SizeT)
+                stopFrameNum = posData.readLastUsedStopFrameNumber()
+                if stopFrameNum is None:
+                    spinBox.setValue(posData.SizeT)
+                else:
+                    spinBox.setValue(stopFrameNum)
+                spinBox.setAlignment(Qt.AlignCenter)
+                visualizeButton = widgets.viewPushButton('Visualize')
+                visualizeButton.clicked.connect(self.visualize_cb)
+                formLabel = QLabel(html_utils.paragraph(f'{pos_foldername}  '))
+                layout = QHBoxLayout()
+                layout.addWidget(formLabel, alignment=Qt.AlignRight)
+                layout.addWidget(spinBox)
+                layout.addWidget(visualizeButton)
+                self.dataDict[visualizeButton] = (spinBox, posData)
+                groupboxLayout.addRow(layout)
+                spinBox.idx = i
+                self.spinBoxes.append(spinBox)
+            
+            fm = QFontMetrics(self.font())
+            elidedTitle = fm.elidedText(
+                exp_path, Qt.ElideLeft, groupbox.sizeHint().width()
             )
-            spinBox = widgets.mySpinBox()
-            spinBox.sigTabEvent.connect(self.keyTabEventSpinbox)
-            posData = load.loadData(img_path, user_ch_name, QParent=parent)
-            posData.getBasenameAndChNames()
-            posData.buildPaths()
-            posData.loadOtherFiles(
-                load_segm_data=False,
-                load_metadata=True,
-                loadSegmInfo=True,
-            )
-            spinBox.setMaximum(posData.SizeT)
-            stopFrameNum = posData.readLastUsedStopFrameNumber()
-            if stopFrameNum is None:
-                spinBox.setValue(posData.SizeT)
-            else:
-                spinBox.setValue(stopFrameNum)
-            spinBox.setAlignment(Qt.AlignCenter)
-            visualizeButton = widgets.viewPushButton('Visualize')
-            visualizeButton.clicked.connect(self.visualize_cb)
-            formLabel = QLabel(html_utils.paragraph(f'{pos_foldername}  '))
-            layout = QHBoxLayout()
-            layout.addWidget(formLabel, alignment=Qt.AlignRight)
-            layout.addWidget(spinBox)
-            layout.addWidget(visualizeButton)
-            self.dataDict[visualizeButton] = (spinBox, posData)
-            formLayout.addRow(layout)
-            spinBox.idx = i
-            self.spinBoxes.append(spinBox)
+            groupbox.setTitle(elidedTitle)
 
-        self.formLayout = formLayout
         mainLayout.addWidget(infoLabel, alignment=Qt.AlignCenter)
-        mainLayout.addLayout(formLayout)
+        mainLayout.addWidget(mainScrollArea)
 
         okButton = widgets.okPushButton('Ok')
         okButton.setShortcut(Qt.Key_Enter)
@@ -9348,26 +9360,56 @@ class askStopFrameSegm(QDialog):
             spinBox.value() for spinBox, posData in self.dataDict.values()
         ]
         self.close()
+    
+    def closeEvent(self, event):
+        for window in self.visualizeWindows:
+            window.close()
 
     def visualize_cb(self, checked=True):
+        self.setDisabled(True)
         spinBox, posData = self.dataDict[self.sender()]
         print('Loading image data...')
         posData.loadImgData()
         posData.frame_i = spinBox.value()-1
-        plot.imshow(posData.img_data, lut='gray')
-        # self.slideshowWin = imageViewer(
-        #     posData=posData, spinBox=spinBox
-        # )
-        # self.slideshowWin.update_img()
-        # # self.slideshowWin.framesScrollBar.setDisabled(True)
-        # self.slideshowWin.show()
+        win = plot.imshow(
+            posData.img_data, 
+            lut='gray',
+            figure_title=posData.relPath,
+            block=False
+        )
+        self.visualizeWindows.append(win)
+        self.setDisabled(False)
 
     def exec_(self):
         self.show(block=True)
 
     def show(self, block=False):
+        screenSize = self.screen().size()
+        maxWidth = screenSize.width() - 50
+        maxHeight = screenSize.height() - 100
+        width, height = 0, 0
+        for scrollArea in self.groupboxScrollAreas:
+            width += scrollArea.minimumWidthNoScrollbar()
+            scrollAreaHeight = scrollArea.minimumHeightNoScrollbar()
+            if scrollAreaHeight > height:
+                height = scrollAreaHeight
+        
+        width += 70
+        height += (
+            self.sizeHint().height() 
+            - self.mainScrollArea.sizeHint().height()
+        )
+
+        if width > maxWidth:
+            width = maxWidth
+        
+        if height > maxHeight:
+            height = maxHeight
+
         self.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint)
         super().show()
+        self.resize(width, height)
+        self.move(25, 50)
         if block:
             self.loop = QEventLoop()
             self.loop.exec_()
@@ -9425,7 +9467,7 @@ class QLineEditDialog(QDialog):
         if isFloat and not allowList:
             entryWidget = QDoubleSpinBox()
             if allowedValues is not None:
-                _min, _max = allowedValues
+                _min, _max = min(allowedValues), max(allowedValues)
                 entryWidget.setMinimum(_min)
                 entryWidget.setMaximum(_max)
             else:
@@ -9436,7 +9478,7 @@ class QLineEditDialog(QDialog):
         elif isInteger and not allowList:
             entryWidget = QSpinBox()
             if allowedValues is not None:
-                _min, _max = allowedValues
+                _min, _max = min(allowedValues), max(allowedValues)
                 entryWidget.setMinimum(_min)
                 entryWidget.setMaximum(_max)
             else:
@@ -17518,7 +17560,8 @@ class ObjectCountDialog(QBaseDialog):
     def __init__(
             self, 
             categoryCountMapper: dict,
-            parent=None
+            parent=None,
+            data: list['load.loadData'] | None=None
         ):
         super().__init__(parent=parent)
         self.setWindowTitle('Object count')
@@ -17529,6 +17572,14 @@ class ObjectCountDialog(QBaseDialog):
         cancelOkLayout = widgets.CancelOkButtonsLayout()
         cancelOkLayout.okButton.clicked.connect(self.ok_cb)
         cancelOkLayout.cancelButton.clicked.connect(self.close)
+        
+        self.data = data
+        if data is not None:
+            saveCountsButton = widgets.savePushButton(
+                'Export counts to CSV table'
+            )
+            saveCountsButton.clicked.connect(self.saveCounts)
+            cancelOkLayout.insertWidget(3, saveCountsButton)
         
         updateCountsButton = widgets.reloadPushButton('Update counts')
         cancelOkLayout.insertWidget(3, updateCountsButton)
@@ -17594,6 +17645,21 @@ class ObjectCountDialog(QBaseDialog):
         mainLayout.addLayout(cancelOkLayout)
         
         self.setLayout(mainLayout)
+    
+    def saveCounts(self, checked=False):
+        categories = self.activeCategories()
+        for posData in self.data:
+            countMapper = posData.countObjectsInSegm(categories)
+            countMapper.pop('In current frame', None)
+            df_count_endname = posData.saveObjCounts(countMapper)
+        
+        txt = html_utils.paragraph(f"""
+            Done!<br><br>
+            Objects count table saved in every loaded Position folder<br> 
+            as a <b>CSV file ending with</b> <code>{df_count_endname}</code>
+        """)
+        msg = widgets.myMessageBox(wrapText=False)
+        msg.information(self, 'Objects count saved', txt)
     
     def updateWarnLabel(self, checked):
         if not checked:
@@ -17814,6 +17880,7 @@ class PreProcessRecipeDialog(QBaseDialog):
         # self.cancelButton.clicked.connect(self.close)
         
         mainLayout.addLayout(keepInputDataTypeLayout)
+        mainLayout.addSpacing(20)
         mainLayout.addWidget(self.preProcessParamsWidget)
         mainLayout.addLayout(buttonsLayout)
         self.mainLayout = mainLayout
@@ -18000,9 +18067,11 @@ class CombineChannelsSetupDialog(PreProcessRecipeDialog):
             hideOnClosing=hideOnClosing,
         )
 
-        self.combineChannelsWidget.sigValuesChangedCombineChannels.connect(self.emitValuesChanged)
+        self.combineChannelsWidget.sigValuesChangedCombineChannels.connect(
+            self.emitValuesChanged
+        )
 
-        self.mainLayout.insertWidget(1, self.combineChannelsWidget)
+        self.mainLayout.insertWidget(2, self.combineChannelsWidget)
         self.combineChannelsWidget.groupbox.setCheckable(False)
         self.combineChannelsWidget.groupbox.setTitle('Combine channels (Operator, Channel name, Multiplier, Add another channel)')
 
@@ -18107,7 +18176,13 @@ class CombineChannelsSetupDialog(PreProcessRecipeDialog):
             )
             return
         
-        if just_add_subt and all([w == 1 for w in multipliers])  and sum(multipliers) != 1:
+        is_default_multiplier = (
+            just_add_subt 
+            and all([w == 1 for w in multipliers]) 
+            and sum(multipliers) != 1
+        )
+        
+        if is_default_multiplier:
             cancel = self.warnDefaultMultipliers()
             if cancel:
                 return
@@ -18144,6 +18219,8 @@ class CombineChannelsSetupDialogUtil(CombineChannelsSetupDialog):
         self.nThreadsSpinBox.setToolTip("Number of threads to use for processing")
         self.mainLayout.addWidget(QLabel("Number of threads:"))
         self.mainLayout.addWidget(self.nThreadsSpinBox)
+        
+        self.mainLayout.addSpacing(20)
 
         qutils.hide_and_delete_layout(self.buttonsLayout)
 
@@ -18219,15 +18296,20 @@ class QCropTrangeTool(QBaseDialog):
         layout = QGridLayout()
         buttonsLayout = QHBoxLayout()
 
-        self.startFrameScrollbar = QScrollBar(Qt.Horizontal)
-        self.startFrameScrollbar.setMaximum(SizeT-1)
-        t = str(1).zfill(self.numDigits)
-        self.startFrameScrollbar.label = QLabel(f'{t}/{SizeT}')
+        self.startFrameScrollbar = widgets.sliderWithSpinBox(
+            spinbox_loc='left', 
+            maximum_on_label=SizeT
+        )
+        self.startFrameScrollbar.setMaximum(SizeT, including_spinbox=True)
+        self.startFrameScrollbar.setMinimum(1, including_spinbox=True)
 
-        self.endFrameScrollbar = QScrollBar(Qt.Horizontal)
-        self.endFrameScrollbar.setMaximum(SizeT-1)
-        self.endFrameScrollbar.setValue(SizeT-1)
-        self.endFrameScrollbar.label = QLabel(f'{SizeT}/{SizeT}')
+        self.endFrameScrollbar = widgets.sliderWithSpinBox(
+            spinbox_loc='left', 
+            maximum_on_label=SizeT
+        )
+        self.endFrameScrollbar.setMaximum(SizeT, including_spinbox=True)
+        self.endFrameScrollbar.setMinimum(1, including_spinbox=True)
+        self.endFrameScrollbar.setValue(SizeT)
 
         cancelButton = widgets.cancelPushButton('Cancel')
         cropButton = widgets.okPushButton(cropButtonText)
@@ -18238,20 +18320,15 @@ class QCropTrangeTool(QBaseDialog):
         layout.addWidget(
             QLabel('Start frame n.  '), row, 0, alignment=Qt.AlignRight
         )
-        layout.addWidget(
-            self.startFrameScrollbar.label, row, 1, alignment=Qt.AlignRight
-        )
         layout.addWidget(self.startFrameScrollbar, row, 2)
 
         row += 1
         layout.setRowStretch(row, 5)
+        layout.addItem(QSpacerItem(10, 10), row, 0)
 
         row += 1
         layout.addWidget(
             QLabel('Stop frame n. '), row, 0, alignment=Qt.AlignRight
-        )
-        layout.addWidget(
-            self.endFrameScrollbar.label, row, 1, alignment=Qt.AlignRight
         )
         layout.addWidget(self.endFrameScrollbar, row, 2)
 
@@ -18263,7 +18340,8 @@ class QCropTrangeTool(QBaseDialog):
             )
             row += 1
 
-        layout.addLayout(buttonsLayout, row, 2, alignment=Qt.AlignRight)
+        layout.addItem(QSpacerItem(10, 20), row, 0)
+        layout.addLayout(buttonsLayout, row+1, 2, alignment=Qt.AlignRight)
 
         layout.setColumnStretch(0, 0)
         layout.setColumnStretch(1, 0)
@@ -18274,30 +18352,29 @@ class QCropTrangeTool(QBaseDialog):
         # resetButton.clicked.connect(self.emitReset)
         cropButton.clicked.connect(self.emitCrop)
         cancelButton.clicked.connect(self.close)
-        self.startFrameScrollbar.valueChanged.connect(self.TvalueChanged)
-        self.endFrameScrollbar.valueChanged.connect(self.TvalueChanged)
+        self.startFrameScrollbar.sigValueChange.connect(self.TvalueChanged)
+        self.endFrameScrollbar.sigValueChange.connect(self.TvalueChanged)
 
     def emitReset(self):
         self.sigReset.emit()
 
     def emitCrop(self):
         self.cancel = False
-        low_z = self.startFrameScrollbar.value()
-        high_z = self.endFrameScrollbar.value()
+        low_z = self.startFrameScrollbar.value() - 1
+        high_z = self.endFrameScrollbar.value() - 1
         self.sigCrop.emit(low_z, high_z)
         self.close()
 
     def updateScrollbars(self, start_frame_i, lower_frame_i):
-        self.startFrameScrollbar.setValue(start_frame_i)
-        self.endFrameScrollbar.setValue(lower_frame_i)
+        self.startFrameScrollbar.setValue(start_frame_i + 1)
+        self.endFrameScrollbar.setValue(lower_frame_i + 1)
 
     def TvalueChanged(self, value):
-        t = str(value+1).zfill(self.numDigits)
-        self.sender().label.setText(f'{t}/{self.SizeT}')
-        self.sigTvalueChanged.emit(value)
+        frame_i = value - 1
+        self.sigTvalueChanged.emit(frame_i)
 
     def showEvent(self, event):
-        self.resize(int(self.width()*1.5), self.height())
+        self.resize(int(self.width()*2.0), self.height())
 
     def closeEvent(self, event):
         super().closeEvent(event)
@@ -18555,7 +18632,7 @@ class SelectFoldersToAnalyse(QBaseDialog):
                 selectedValues=values
             )
             if select_folder.cancel:
-                continue
+                return
             
             for pos in select_folder.selected_pos:
                 paths.append(os.path.join(exp_path, pos))
@@ -18579,6 +18656,8 @@ class SelectFoldersToAnalyse(QBaseDialog):
                 return
             
             paths = self.parse_select_from_exp_paths(exp_paths)
+            if paths is None:
+                return
         else:
             paths = [selected_path]
         

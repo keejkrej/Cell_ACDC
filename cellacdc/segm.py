@@ -171,7 +171,7 @@ class segmWin(QMainWindow):
         else:
             logger.info(f'Initializing Segmentation module...')
 
-        self.setWindowTitle("Cell-ACDC - Segment")
+        self.setWindowTitle(f'Cell-ACDC v{self._version} - Segment')
         self.setWindowIcon(QtGui.QIcon(":icon.ico"))
 
         mainContainer = QWidget()
@@ -212,7 +212,7 @@ class segmWin(QMainWindow):
         self.progressLabel = widgets.Label(self, force_html=True)
         self.mainLayout.addWidget(self.progressLabel)
 
-        abortButton = widgets.cancelPushButton('Abort process')
+        abortButton = widgets.cancelPushButton('Stop processs')
         abortButton.clicked.connect(self.close)
         buttonsLayout.addStretch(1)
         buttonsLayout.addWidget(abortButton)
@@ -365,7 +365,9 @@ class segmWin(QMainWindow):
         font = QtGui.QFont()
         font.setPixelSize(13)
 
-        self.setWindowTitle('Cell-ACDC - Segmentation and Tracking workflow')
+        self.setWindowTitle(
+            f'Cell-ACDC v{self._version} - Segmentation and Tracking workflow'
+        )
 
         self.addPbar()
         self.addlogTerminal()

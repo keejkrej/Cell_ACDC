@@ -6675,8 +6675,9 @@ class MainPlotItem(pg.PlotItem):
         self.highlightingRectItems = None
         self._baseImageItem = None
         self._imageItems = []
+        self.highlightingRectItemsColor = None
     
-    def addHighlightingRectItems(self):
+    def addHighlightingRectItems(self, color=None):
         self.highlightingRectItems = {
             'left': RectItem(QRectF()),
             'right': RectItem(QRectF()),
@@ -6685,6 +6686,20 @@ class MainPlotItem(pg.PlotItem):
         }
         for rect in self.highlightingRectItems.values():
             self.addItem(rect)
+        
+        if color is None:
+            return
+        
+        self.setHighlightingRectItemsColor(color)
+    
+    def setHighlightingRectItemsColor(self, color):
+        if color == self.highlightingRectItemsColor:
+            return
+        
+        for item in self.highlightingRectItems.values():
+            item.setColor(color)
+        
+        self.highlightingRectItemsColor = color
     
     def addBaseImageItem(self, baseImageItem):
         self._baseImageItem = baseImageItem
@@ -6695,14 +6710,22 @@ class MainPlotItem(pg.PlotItem):
         self._imageItems.append(imageItem)
         self.addItem(imageItem)
     
-    def setHighlighted(self, highlighted):
+    def setHighlighted(self, highlighted, color=None):
+        if color is None:
+            color = self.highlightingRectItemsColor
+        
+        if color is None:
+            color = 'green'
+            
         if self.highlightingRectItems is None:
-            self.addHighlightingRectItems()
+            self.addHighlightingRectItems(color=color)
         
         if not highlighted:
             for rect in self.highlightingRectItems.values():
                 rect.setQRect(QRectF())
             return
+        
+        self.setHighlightingRectItemsColor(color)
         
         ((xmin, xmax), (ymin, ymax)) = self.viewRange()
         xmin = xmin if xmin >= 0 else 0
@@ -6812,7 +6835,6 @@ class sliderWithSpinBox(QWidget):
             self._isFloat = True
 
         self.slider = QSlider(Qt.Horizontal, self)
-        layout.addWidget(self.slider, row+1, col)
 
         if self._normalize or self._isFloat:
             self.spinBox = DoubleSpinBox(self)
@@ -6820,16 +6842,36 @@ class sliderWithSpinBox(QWidget):
             self.spinBox = SpinBox(self)
         self.spinBox.setAlignment(Qt.AlignCenter)
         self.spinBox.setMaximum(2**31-1)
-        layout.addWidget(self.spinBox, row+1, col+1)
+
+        maximum_on_label = kwargs.get('maximum_on_label')
+        spinbox_loc = kwargs.get('spinbox_loc', 'right')
+        if spinbox_loc == 'right':
+            spinbox_col = col+1
+            slider_col = col
+            if maximum_on_label is not None:
+                maximum_on_label_col = spinbox_col + 1
+        elif spinbox_loc == 'left':
+            spinbox_col = col
+            slider_col = col + 1
+            if maximum_on_label is not None:
+                maximum_on_label_col = spinbox_col + 1
+                slider_col += 1
+
+        if maximum_on_label is not None:
+            self.labelMaximum = QLabel()
+            layout.addWidget(self.labelMaximum, row+1, maximum_on_label_col)
+        layout.addWidget(self.slider, row+1, slider_col)
+        layout.addWidget(self.spinBox, row+1, spinbox_col)
+        
         if title is not None:
             layout.setRowStretch(0, 1)
         layout.setRowStretch(row+1, 1)
-        layout.setColumnStretch(col, 6)
-        layout.setColumnStretch(col+1, 1)
+        layout.setColumnStretch(slider_col, 6)
+        layout.setColumnStretch(spinbox_col, 1)
 
         self._layout = layout
         self.lastCol = col+1
-        self.sliderCol = row+1
+        self.sliderCol = slider_col
 
         self.slider.valueChanged.connect(self.sliderValueChanged)
         self.slider.sliderReleased.connect(self.onEditingFinished)
@@ -6839,6 +6881,11 @@ class sliderWithSpinBox(QWidget):
         layout.setContentsMargins(5, 0, 5, 0)
         
         self.setLayout(layout)
+
+        
+        if maximum_on_label is not None:
+            self.setMaximum(maximum_on_label)
+            self.labelMaximum.setText(f'/{maximum_on_label}')
 
     def onEditingFinished(self):
         self.editingFinished.emit()
@@ -6870,16 +6917,18 @@ class sliderWithSpinBox(QWidget):
             self.sigValueChange.emit(self.value())
             self.valueChanged.emit(self.value())
 
-    def setMaximum(self, max):
+    def setMaximum(self, max, including_spinbox=False):
         self.slider.setMaximum(max)
-        # self.spinBox.setMaximum(max)
+        if including_spinbox:
+            self.spinBox.setMaximum(max)
 
     def setSingleStep(self, step):
         self.spinBox.setSingleStep(step)
 
-    def setMinimum(self, min):
+    def setMinimum(self, min, including_spinbox=False):
         self.slider.setMinimum(min)
-        # self.spinBox.setMinimum(min)
+        if including_spinbox:
+            self.spinBox.setMinimum(min)
 
     def setSingleStep(self, step):
         self.spinBox.setSingleStep(step)
@@ -11247,6 +11296,13 @@ class RectItem(pg.GraphicsObject):
         self.picture = QPicture()
         self._generate_picture()
 
+    def setColor(self, color):
+        rgba = matplotlib.colors.to_rgba(color, alpha=100/255)
+        rgba = [round(c*255) for c in rgba]
+        self._brush = pg.mkBrush(rgba)
+        self._generate_picture()
+        self.update()
+    
     def setRect(self, x, y, width, height):
         self._rect = QRectF(x, y, width, height)
         self._generate_picture()
@@ -11332,6 +11388,9 @@ class OverlayToolbar(ToolBar):
         self.singleChannelCheckbox.toggled.connect(
             self.sigSetSingleChannel.emit
         )
+    
+    def setTransparent(self, transparent: bool):
+        self.transparencyCheckbox.setChecked(transparent)
     
     def isTransparent(self):
         return self.transparencyCheckbox.isChecked()

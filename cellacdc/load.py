@@ -23,24 +23,7 @@ import time
 
 import skimage
 import skimage.io
-import skimage.measure
-
-from . import GUI_INSTALLED
-
-if GUI_INSTALLED:
-    from qtpy import QtGui
-    from qtpy.QtCore import Qt, QRect, QRectF
-    from qtpy.QtWidgets import (
-        QApplication, QMessageBox, QFileDialog
-    )
-    import pyqtgraph as pg
-    pg.setConfigOption('imageAxisOrder', 'row-major')
-    from . import apps
-    from . import widgets
-    from . import qrc_resources_path, qrc_resources_light_path
-    from . import qrc_resources_dark_path
-    from . import whitelist
-    
+import skimage.measure    
     
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -57,6 +40,22 @@ from . import sorted_cols
 from . import io
 from . import core
 from . import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+
+from . import GUI_INSTALLED
+
+if GUI_INSTALLED:
+    from qtpy import QtGui
+    from qtpy.QtCore import Qt, QRect, QRectF
+    from qtpy.QtWidgets import (
+        QApplication, QMessageBox, QFileDialog
+    )
+    import pyqtgraph as pg
+    pg.setConfigOption('imageAxisOrder', 'row-major')
+    from . import apps
+    from . import widgets
+    from . import qrc_resources_path, qrc_resources_light_path
+    from . import qrc_resources_dark_path
+    from . import whitelist
 
 acdc_df_bool_cols = [
     'is_cell_dead',
@@ -95,6 +94,9 @@ channel_file_formats = (
     '_aligned.h5', '.h5', '_aligned.npz', '.tif'
 )
 ISO_TIMESTAMP_FORMAT = r'iso%Y%m%d%H%M%S'
+
+class FileNameError(Exception):
+    pass
 
 def _pd_cast_float_and_bool_to_int(df, col, notna_idx):
     df.loc[notna_idx, col] = df.loc[notna_idx, col].astype(int)
@@ -1005,6 +1007,22 @@ def get_endnames(basename, files):
         endnames.append(endname)
     return endnames
 
+def get_filepath_from_endname(images_path, endname):
+    channel_filepath = get_filename_from_channel(images_path, endname)
+    if channel_filepath:
+        return channel_filepath
+    
+    for file in myutils.listdir(images_path):
+        if file.endswith(endname):
+            return os.path.join(images_path, file) 
+
+    for file in myutils.listdir(images_path):
+        file_noext, ext = os.path.splitext(file)
+        if file_noext.endswith(endname):
+            return os.path.join(images_path, file) 
+    
+    return ''
+
 def get_exp_path(path):
     folder_type = myutils.determine_folder_type(path)
     is_pos_folder, is_images_folder, _ = folder_type
@@ -1236,7 +1254,10 @@ def is_bkgrROIs_present(images_path):
     return False
 
 class loadData:
-    def __init__(self, imgPath, user_ch_name, relPathDepth=3, QParent=None, log_func=None):
+    def __init__(
+            self, imgPath, user_ch_name, 
+            relPathDepth=3, QParent=None, log_func=None
+        ):
         self.fluo_data_dict = {}
         self.fluo_bkgrData_dict = {}
         self.bkgrROIs = []
@@ -1394,6 +1415,21 @@ class loadData:
             ls, self.images_path, useExt=useExt
         )
         self.basename = selector.basename
+        # Check if any file is called like the basename --> not allowed
+        for file in ls:
+            filename, _ = os.path.splitext(file)
+            if filename != self.basename:
+                continue
+            
+            sep = '*'*100
+            raise FileNameError(
+                f'\n\n{sep}\n'
+                f'[ERROR]: The file "{file}" has the same name as '
+                f'the basename of all other files.\n\n'
+                f'Please, rename the file to include something '
+                f'after "{self.basename}", e.g., "{self.basename}_channel_name".'
+            )
+            break
 
     def loadImgData(self, imgPath=None, signals=None):
         if imgPath is None:
@@ -1513,6 +1549,117 @@ class loadData:
             img_data[i] = frame
         return img_data
 
+    def countObjectsInSegmTimelapse(self, categories: set[str] | list[str]):
+        numObjsCurrentFrame = len(self.IDs)
+        
+        uniqueIDsVisited = None
+        uniqueIDsAll = None
+        numObjsVisitedFrames = None
+        numObjsTotal = None
+        if 'Unique objects in all visited frames' in categories:
+            uniqueIDsVisited = set()
+        
+        if 'Unique objects in entire video' in categories:
+            uniqueIDsAll = set()
+        
+        if 'In all visited frames' in categories:
+            numObjsVisitedFrames = 0
+        
+        if 'In entire video' in categories:
+            numObjsTotal = 0
+            
+        for frame_i in range(len(self.segm_data)):
+            lab = self.allData_li[frame_i]['labels']
+            if lab is not None:
+                IDsFrame = self.allData_li[frame_i]['IDs']
+                
+                if uniqueIDsVisited is not None:
+                    uniqueIDsVisited.update(IDsFrame)
+                
+                if uniqueIDsAll is not None:
+                    uniqueIDsAll.update(IDsFrame)
+                
+                numObjsFrame = len(IDsFrame)
+                
+                if numObjsVisitedFrames is not None:
+                    numObjsVisitedFrames += numObjsFrame
+                    
+                if numObjsTotal is not None:
+                    numObjsTotal += numObjsFrame
+            else:
+                lab = self.segm_data[frame_i]
+                
+                if numObjsTotal is not None or numObjsTotal is not None:
+                    rp = skimage.measure.regionprops(self.segm_data[frame_i])
+                
+                if numObjsTotal is not None:
+                    numObjsTotal += len(rp)
+                    
+                if uniqueIDsAll is not None:
+                    uniqueIDsAll.update([obj.label for obj in rp])
+        
+        numUniqueObjsVisitedFrames = None
+        if uniqueIDsVisited is not None:
+            numUniqueObjsVisitedFrames = len(uniqueIDsVisited)
+        
+        numUniqueObjsTotal = None
+        if uniqueIDsAll is not None:
+            numUniqueObjsTotal = len(uniqueIDsAll)
+        
+        allCategoryCountMapper = {
+            'In current frame': numObjsCurrentFrame, 
+            'In all visited frames': numObjsVisitedFrames, 
+            'In entire video': numObjsTotal, 
+            'Unique objects in all visited frames': numUniqueObjsVisitedFrames, 
+            'Unique objects in entire video': numUniqueObjsTotal
+        }
+        
+        return allCategoryCountMapper
+    
+    def countObjectsInSegmSnapshots(self, categories: set[str] | list[str]):
+        if hasattr(self, 'IDs'):
+            numObjs = len(self.IDs)
+        else:
+            lab = np.squeeze(self.segm_data)
+            rp = skimage.measure.regionprops(lab)
+            numObjs = len(rp)
+        
+        mapper = {
+            'In current position': numObjs
+        }
+        
+        return mapper
+    
+    def countObjectsInSegm(self, categories: set[str] | list[str] | None=None):
+        if self.SizeT > 1:
+            if categories is None:
+                categories = ['In entire video']
+                
+            return self.countObjectsInSegmTimelapse(categories)
+        else:
+            if categories is None:
+                categories = ['In current position']
+                
+            return self.countObjectsInSegmSnapshots(categories)
+    
+    def saveObjCounts(self, countMapper: dict[str, int]):
+        df = pd.DataFrame(countMapper, index=[0])
+        segmFilename = os.path.basename(self.segm_npz_path)
+        segmEndname = segmFilename[len(self.basename):]
+        dfCountEndname = (
+            segmEndname
+            .replace('segm', 'acdc_objects_count')
+            .replace('.npz', '.csv')
+        )
+        
+        dfCountFilename = f'{self.basename}{dfCountEndname}'
+        dfCountFilepath = os.path.join(self.images_path, dfCountFilename)
+        
+        df.to_csv(dfCountFilepath, index=False)
+        
+        return dfCountEndname
+        
+    
     def detectMultiSegmNpz(
             self, multiPos=False, signals=None,
             mutex=None, waitCond=None, askMultiSegmFunc=None,
